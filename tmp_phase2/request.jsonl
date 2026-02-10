@@ -1,0 +1,1 @@
+{"op": "otp_xor_file", "input_path": "C:\\projects\\safeanar\\tmp_phase2\\plain.bin", "key_path": "C:\\projects\\safeanar\\tmp_phase2\\key.bin", "output_path": "C:\\projects\\safeanar\\tmp_phase2\\out.bin"}
