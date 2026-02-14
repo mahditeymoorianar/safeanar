@@ -9,6 +9,22 @@ if(MINGW)
     add_link_options(-static -static-libgcc -static-libstdc++)
 endif()
 
+file(GLOB CRYPTOPP_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cryptopp/*.cpp
+)
+
+list(FILTER CRYPTOPP_SOURCES EXCLUDE REGEX ".*/(bench[0-9]+|datatest|dlltest|fipsalgt|fipstest|regtest[0-9]+|test|validat[0-9]+)\\.cpp$")
+
+add_library(cryptopp_vendor STATIC
+    ${CRYPTOPP_SOURCES}
+)
+target_include_directories(cryptopp_vendor PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cryptopp
+)
+target_compile_definitions(cryptopp_vendor PUBLIC
+    CRYPTOPP_DISABLE_ASM=1
+)
+
 add_library(libsafeanar STATIC
     src/anar_key.cpp
     src/crypto_engine.cpp
@@ -19,6 +35,9 @@ add_library(libsafeanar STATIC
 )
 target_include_directories(libsafeanar PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(libsafeanar PUBLIC
+    cryptopp_vendor
 )
 
 add_executable(safeanar main.cpp)

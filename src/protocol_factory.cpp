@@ -70,6 +70,72 @@ private:
     ProtocolFactoryOptions options_;
 };
 
+class PqSha256Protocol final : public ICryptoProtocol {
+public:
+    explicit PqSha256Protocol(const ProtocolFactoryOptions options) : options_(options) {}
+
+    AnarStatus Transform(
+        const std::vector<std::uint8_t>& input,
+        const std::vector<std::uint8_t>& key_bytes,
+        const std::array<std::uint8_t, 16>& nonce,
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress) const override {
+        (void)options_;
+        if (key_bytes.size() != 32U) {
+            return AnarStatus::InvalidKeyLength;
+        }
+        std::array<std::uint8_t, 32> key{};
+        for (std::size_t i = 0; i < key.size(); ++i) {
+            key[i] = key_bytes[i];
+        }
+        return CryptoEngine::PqSha256StreamXor(key, nonce, input, output, progress);
+    }
+
+    bool RequiresKeyFile() const override {
+        return false;
+    }
+
+    std::string_view Name() const override {
+        return "pq";
+    }
+
+private:
+    ProtocolFactoryOptions options_;
+};
+
+class Serpent256CtrProtocol final : public ICryptoProtocol {
+public:
+    explicit Serpent256CtrProtocol(const ProtocolFactoryOptions options) : options_(options) {}
+
+    AnarStatus Transform(
+        const std::vector<std::uint8_t>& input,
+        const std::vector<std::uint8_t>& key_bytes,
+        const std::array<std::uint8_t, 16>& nonce,
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress) const override {
+        (void)options_;
+        if (key_bytes.size() != 32U) {
+            return AnarStatus::InvalidKeyLength;
+        }
+        std::array<std::uint8_t, 32> key{};
+        for (std::size_t i = 0; i < key.size(); ++i) {
+            key[i] = key_bytes[i];
+        }
+        return CryptoEngine::Serpent256CtrXor(key, nonce, input, output, progress);
+    }
+
+    bool RequiresKeyFile() const override {
+        return false;
+    }
+
+    std::string_view Name() const override {
+        return "serpent-256";
+    }
+
+private:
+    ProtocolFactoryOptions options_;
+};
+
 }  // namespace
 
 std::unique_ptr<ICryptoProtocol> ProtocolFactory::Create(
@@ -90,6 +156,14 @@ std::unique_ptr<ICryptoProtocol> ProtocolFactory::Create(
     if (normalized == "otp") {
         out_status = AnarStatus::Ok;
         return std::make_unique<OtpProtocol>(options);
+    }
+    if (normalized == "pq") {
+        out_status = AnarStatus::Ok;
+        return std::make_unique<PqSha256Protocol>(options);
+    }
+    if (normalized == "serpent-256" || normalized == "serpent256") {
+        out_status = AnarStatus::Ok;
+        return std::make_unique<Serpent256CtrProtocol>(options);
     }
 
     out_status = AnarStatus::UnknownOp;

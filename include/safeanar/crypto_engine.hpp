@@ -42,6 +42,54 @@ public:
         std::vector<std::uint8_t>& output,
         const std::function<void(std::size_t, std::size_t)>& progress = {});
 
+    static AnarStatus PqSha256StreamXor(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 16>& nonce,
+        const std::vector<std::uint8_t>& input,
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static AnarStatus ChaCha20Poly1305Encrypt(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 24>& nonce,
+        const std::vector<std::uint8_t>& plaintext,
+        std::vector<std::uint8_t>& out_ciphertext,
+        std::array<std::uint8_t, 16>& out_tag,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static AnarStatus ChaCha20Poly1305DecryptVerify(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 24>& nonce,
+        const std::vector<std::uint8_t>& ciphertext,
+        const std::array<std::uint8_t, 16>& tag,
+        std::vector<std::uint8_t>& out_plaintext,
+        bool& out_auth_ok,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static AnarStatus XChaCha20Poly1305Encrypt(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 24>& nonce,
+        const std::vector<std::uint8_t>& plaintext,
+        std::vector<std::uint8_t>& out_ciphertext,
+        std::array<std::uint8_t, 16>& out_tag,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static AnarStatus XChaCha20Poly1305DecryptVerify(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 24>& nonce,
+        const std::vector<std::uint8_t>& ciphertext,
+        const std::array<std::uint8_t, 16>& tag,
+        std::vector<std::uint8_t>& out_plaintext,
+        bool& out_auth_ok,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static AnarStatus Serpent256CtrXor(
+        const std::array<std::uint8_t, 32>& key_bytes,
+        const std::array<std::uint8_t, 16>& nonce,
+        const std::vector<std::uint8_t>& input,
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress = {});
+
     static AnarStatus OtpXorBytes(
         const std::vector<std::uint8_t>& input,
         const std::vector<std::uint8_t>& key_bytes,

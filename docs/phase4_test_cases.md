@@ -18,11 +18,13 @@ This document defines executable CLI tests for integration of library components
 
 ## CLI Contract Under Test
 Commands:
-- `safeanar --encrypt --path <input> --out <enc> (--key <k>|--key-file <kf>) [--protocol aes|otp] [--padding-size <size>] [--fast]`
-- `safeanar --encrypt --text <text> --out <enc> (--key <k>|--key-file <kf>) [--protocol aes|otp] [--padding-size <size>] [--fast]`
+- `safeanar --encrypt --path <input> --out <enc> (--key <k>|--key-file <kf>) [--protocol aes|otp|pq|chacha20poly1305|xchacha20poly1305|serpent-256] [--padding-size <size>] [--fast]`
+- `safeanar --encrypt --text <text> --out <enc> (--key <k>|--key-file <kf>) [--protocol aes|otp|pq|chacha20poly1305|xchacha20poly1305|serpent-256] [--padding-size <size>] [--fast]`
 - `safeanar --decrypt --path <enc> --out <output> (--key <k>|--key-file <kf>) [--fast]`
 - `safeanar --gen-key <words|chars> [--count N|--length N]`
 - `safeanar gen-key <words|chars> [--count N|--length N]`
+- `safeanar --list-protocols`
+- `safeanar protocols`
 - `safeanar delete --path <file> [--passes N]`
 
 General behavior:
@@ -45,6 +47,10 @@ General behavior:
 | AK4-E2E-004 | Default protocol works | Omit `--protocol` on encrypt/decrypt | Successful round-trip |
 | AK4-E2E-005 | Explicit OTP protocol works | Use `--protocol otp` with `--key-file` | Successful round-trip |
 | AK4-E2E-006 | OTP passphrase rejected | Use `--protocol otp` with `--key` | Non-zero exit, generic requirement error |
+| AK4-E2E-007 | Explicit PQ protocol works | Use `--protocol pq` with passphrase key | Successful round-trip |
+| AK4-E2E-008 | ChaCha20/Poly1305 round-trip | Use `--protocol chacha20poly1305` | Successful round-trip |
+| AK4-E2E-009 | XChaCha20/Poly1305 round-trip | Use `--protocol xchacha20poly1305` | Successful round-trip |
+| AK4-E2E-010 | Serpent-256 round-trip | Use `--protocol serpent-256` | Successful round-trip |
 
 ### Flags and Parsing
 | ID | Description | Input | Expected |
@@ -74,6 +80,7 @@ General behavior:
 | ID | Description | Input | Expected |
 | --- | --- | --- | --- |
 | AK4-SEC-001 | Wrong key fails generically | Decrypt valid ciphertext with wrong key | Non-zero exit; message contains `Authentication Failed` |
+| AK4-SEC-003 | Wrong key fails generically across passphrase protocols | Repeat wrong-key decrypt for `aes`, `pq`, `chacha20poly1305`, `xchacha20poly1305`, `serpent-256` | Non-zero exit; message contains `Authentication Failed` for each |
 | AK4-SEC-002 | Invalid invocation recovery | Invalid CLI invocation then valid one | Process remains stable; valid invocation succeeds |
 
 ### Key Generation
@@ -97,6 +104,7 @@ General behavior:
 | ID | Description | Input | Expected |
 | --- | --- | --- | --- |
 | AK4-HLP-001 | Help lists core flags | `--help` | Output includes all core vision flags and delete usage |
+| AK4-HLP-002 | Protocol list command | `--list-protocols` and `protocols` | Output includes all supported protocol names |
 
 ### Slow / Nightly
 | ID | Description | Input | Expected |

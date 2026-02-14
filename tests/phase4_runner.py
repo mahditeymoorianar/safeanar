@@ -143,6 +143,60 @@ def test_default_protocol(ctx):
         assert_equal(sha256_file(src), sha256_file(dec), "default protocol roundtrip mismatch")
 
 
+def test_pq_protocol_roundtrip(ctx):
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "pq.bin")
+        enc = os.path.join(td, "pq.enc")
+        dec = os.path.join(td, "pq.dec")
+        create_random_file(src, 32768)
+        ensure_ok(run_cli(ctx, ["--encrypt", "--path", src, "--out", enc, "--key", "pq-key", "--protocol", "pq"]))
+        ensure_ok(run_cli(ctx, ["--decrypt", "--path", enc, "--out", dec, "--key", "pq-key"]))
+        assert_equal(sha256_file(src), sha256_file(dec), "pq protocol roundtrip mismatch")
+
+
+def test_chacha20poly1305_roundtrip(ctx):
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "chacha.bin")
+        enc = os.path.join(td, "chacha.enc")
+        dec = os.path.join(td, "chacha.dec")
+        create_random_file(src, 32768)
+        ensure_ok(
+            run_cli(
+                ctx,
+                ["--encrypt", "--path", src, "--out", enc, "--key", "chacha-key", "--protocol", "chacha20poly1305"],
+            )
+        )
+        ensure_ok(run_cli(ctx, ["--decrypt", "--path", enc, "--out", dec, "--key", "chacha-key"]))
+        assert_equal(sha256_file(src), sha256_file(dec), "chacha20poly1305 roundtrip mismatch")
+
+
+def test_xchacha20poly1305_roundtrip(ctx):
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "xchacha.bin")
+        enc = os.path.join(td, "xchacha.enc")
+        dec = os.path.join(td, "xchacha.dec")
+        create_random_file(src, 32768)
+        ensure_ok(
+            run_cli(
+                ctx,
+                ["--encrypt", "--path", src, "--out", enc, "--key", "xchacha-key", "--protocol", "xchacha20poly1305"],
+            )
+        )
+        ensure_ok(run_cli(ctx, ["--decrypt", "--path", enc, "--out", dec, "--key", "xchacha-key"]))
+        assert_equal(sha256_file(src), sha256_file(dec), "xchacha20poly1305 roundtrip mismatch")
+
+
+def test_serpent256_roundtrip(ctx):
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "serpent.bin")
+        enc = os.path.join(td, "serpent.enc")
+        dec = os.path.join(td, "serpent.dec")
+        create_random_file(src, 32768)
+        ensure_ok(run_cli(ctx, ["--encrypt", "--path", src, "--out", enc, "--key", "serpent-key", "--protocol", "serpent-256"]))
+        ensure_ok(run_cli(ctx, ["--decrypt", "--path", enc, "--out", dec, "--key", "serpent-key"]))
+        assert_equal(sha256_file(src), sha256_file(dec), "serpent-256 roundtrip mismatch")
+
+
 def test_quoted_path_and_out_values(ctx):
     with tempfile.TemporaryDirectory(prefix="safeanar phase4 ") as td:
         src = os.path.join(td, "plain input.bin")
@@ -384,6 +438,24 @@ def test_wrong_key_generic_auth_failure(ctx):
         assert_true("Authentication Failed" in stderr, f"expected generic auth failure, got stderr={stderr}")
 
 
+def test_wrong_key_generic_auth_failure_all_passphrase_protocols(ctx):
+    protocols = ["aes", "pq", "chacha20poly1305", "xchacha20poly1305", "serpent-256"]
+    with tempfile.TemporaryDirectory() as td:
+        for protocol in protocols:
+            src = os.path.join(td, f"{protocol}.plain.bin")
+            enc = os.path.join(td, f"{protocol}.cipher.enc")
+            dec = os.path.join(td, f"{protocol}.out.bin")
+            create_random_file(src, 1536)
+            ensure_ok(run_cli(ctx, ["--encrypt", "--path", src, "--out", enc, "--key", "correct-key", "--protocol", protocol]))
+            rc = run_cli(ctx, ["--decrypt", "--path", enc, "--out", dec, "--key", "wrong-key"])
+            ensure_fail(rc)
+            stderr = rc.stderr.strip()
+            assert_true(
+                "Authentication Failed" in stderr,
+                f"expected generic auth failure for protocol={protocol}, got stderr={stderr}",
+            )
+
+
 def test_invalid_then_valid_process(ctx):
     bad = run_cli(ctx, ["--encrypt"])
     ensure_fail(bad)
@@ -494,11 +566,29 @@ def test_help_lists_core_flags(ctx):
         "--protocol",
         "--padding-size",
         "--gen-key",
+        "--list-protocols",
         "--fast",
         "safeanar delete --path",
     ]
     for token in required:
         assert_true(token in output, f"missing help token: {token}")
+
+
+def test_list_protocols_command(ctx):
+    expected_tokens = [
+        "aes",
+        "otp",
+        "pq",
+        "chacha20poly1305",
+        "xchacha20poly1305",
+        "serpent-256",
+    ]
+    for args in (["--list-protocols"], ["protocols"]):
+        rc = run_cli(ctx, args)
+        ensure_ok(rc)
+        output = rc.stdout
+        for token in expected_tokens:
+            assert_true(token in output, f"missing protocol token {token} in output for args={args}")
 
 
 def build_tests():
@@ -507,6 +597,10 @@ def build_tests():
         ("AK4-E2E-002", "Text encrypt/decrypt round-trip", test_text_roundtrip, False),
         ("AK4-E2E-003", "Directory portability workflow", test_directory_portability, False),
         ("AK4-E2E-004", "Default protocol works", test_default_protocol, False),
+        ("AK4-E2E-007", "PQ protocol round-trip", test_pq_protocol_roundtrip, False),
+        ("AK4-E2E-008", "ChaCha20/Poly1305 round-trip", test_chacha20poly1305_roundtrip, False),
+        ("AK4-E2E-009", "XChaCha20/Poly1305 round-trip", test_xchacha20poly1305_roundtrip, False),
+        ("AK4-E2E-010", "Serpent-256 round-trip", test_serpent256_roundtrip, False),
         ("AK4-E2E-021", "Quoted --path/--out values with whitespace work", test_quoted_path_and_out_values, False),
         ("AK4-E2E-022", "Unicode paths round-trip", test_unicode_path_roundtrip, False),
         ("AK4-E2E-005", "Explicit OTP protocol with key-file works", test_otp_protocol, False),
@@ -528,6 +622,12 @@ def build_tests():
         ("AK4-CLI-016", "Decrypt missing input path rejected", test_decrypt_missing_path, False),
         ("AK4-CLI-017", "Missing encrypted file rejected", test_missing_encrypted_file, False),
         ("AK4-SEC-001", "Wrong key fails generically", test_wrong_key_generic_auth_failure, False),
+        (
+            "AK4-SEC-003",
+            "Wrong key fails generically for all passphrase protocols",
+            test_wrong_key_generic_auth_failure_all_passphrase_protocols,
+            False,
+        ),
         ("AK4-SEC-002", "Invalid input does not crash follow-up valid flow", test_invalid_then_valid_process, False),
         ("AK4-KEY-001", "Keygen words default count", test_keygen_words_default, False),
         ("AK4-KEY-002", "Keygen chars default length", test_keygen_chars_default, False),
@@ -539,6 +639,7 @@ def build_tests():
         ("AK4-DEL-002", "Delete command missing path rejected", test_delete_missing_path_rejected, False),
         ("AK4-DEL-003", "Delete command invalid passes rejected", test_delete_invalid_passes_rejected, False),
         ("AK4-HLP-001", "Help lists core flags", test_help_lists_core_flags, False),
+        ("AK4-HLP-002", "Protocol list command", test_list_protocols_command, False),
         ("AK4-E2E-020", "Large directory portability", test_large_directory_portability, True),
     ]
 

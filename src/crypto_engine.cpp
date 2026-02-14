@@ -9,6 +9,10 @@
 #include <string_view>
 #include <vector>
 
+#include "chachapoly.h"
+#include "modes.h"
+#include "serpent.h"
+
 namespace safeanar {
 
 namespace {
@@ -17,6 +21,8 @@ constexpr std::size_t kAesBlockSize = 16;
 constexpr std::size_t kAes256KeySize = 32;
 constexpr int kAesNk = 8;
 constexpr int kAesNr = 14;
+constexpr std::size_t kSha256BlockSize = 64;
+constexpr std::size_t kSha256DigestSize = 32;
 
 constexpr std::array<std::uint8_t, 256> kSbox = {
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
@@ -63,6 +69,104 @@ using Word = std::array<std::uint8_t, 4>;
 using Matrix = std::array<Word, 4>;  // 4 columns x 4 rows
 using RoundKeys = std::array<Matrix, kAesNr + 1>;
 
+std::uint32_t RotRight32(const std::uint32_t v, const std::uint32_t n) {
+    return (v >> n) | (v << (32U - n));
+}
+
+std::array<std::uint8_t, kSha256DigestSize> Sha256Digest(const std::uint8_t* data, const std::size_t len) {
+    static constexpr std::array<std::uint32_t, 64> k = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
+
+    std::array<std::uint32_t, 8> h = {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U};
+
+    std::vector<std::uint8_t> msg;
+    msg.reserve(len + kSha256BlockSize);
+    msg.insert(msg.end(), data, data + len);
+    const std::uint64_t bit_len = static_cast<std::uint64_t>(msg.size()) * 8ULL;
+    msg.push_back(0x80U);
+    while ((msg.size() % kSha256BlockSize) != 56U) {
+        msg.push_back(0U);
+    }
+    for (int i = 7; i >= 0; --i) {
+        msg.push_back(static_cast<std::uint8_t>((bit_len >> (i * 8)) & 0xFFU));
+    }
+
+    std::array<std::uint32_t, 64> w{};
+    for (std::size_t chunk = 0; chunk < msg.size(); chunk += kSha256BlockSize) {
+        for (int i = 0; i < 16; ++i) {
+            const std::size_t idx = chunk + static_cast<std::size_t>(i * 4);
+            w[i] =
+                (static_cast<std::uint32_t>(msg[idx]) << 24U) |
+                (static_cast<std::uint32_t>(msg[idx + 1]) << 16U) |
+                (static_cast<std::uint32_t>(msg[idx + 2]) << 8U) |
+                static_cast<std::uint32_t>(msg[idx + 3]);
+        }
+        for (int i = 16; i < 64; ++i) {
+            const std::uint32_t s0 = RotRight32(w[i - 15], 7) ^ RotRight32(w[i - 15], 18) ^ (w[i - 15] >> 3U);
+            const std::uint32_t s1 = RotRight32(w[i - 2], 17) ^ RotRight32(w[i - 2], 19) ^ (w[i - 2] >> 10U);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+
+        std::uint32_t a = h[0];
+        std::uint32_t b = h[1];
+        std::uint32_t c = h[2];
+        std::uint32_t d = h[3];
+        std::uint32_t e = h[4];
+        std::uint32_t f = h[5];
+        std::uint32_t g = h[6];
+        std::uint32_t hh = h[7];
+
+        for (int i = 0; i < 64; ++i) {
+            const std::uint32_t s1 = RotRight32(e, 6) ^ RotRight32(e, 11) ^ RotRight32(e, 25);
+            const std::uint32_t ch = (e & f) ^ ((~e) & g);
+            const std::uint32_t temp1 = hh + s1 + ch + k[i] + w[i];
+            const std::uint32_t s0 = RotRight32(a, 2) ^ RotRight32(a, 13) ^ RotRight32(a, 22);
+            const std::uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+            const std::uint32_t temp2 = s0 + maj;
+
+            hh = g;
+            g = f;
+            f = e;
+            e = d + temp1;
+            d = c;
+            c = b;
+            b = a;
+            a = temp1 + temp2;
+        }
+
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+        h[5] += f;
+        h[6] += g;
+        h[7] += hh;
+    }
+
+    std::array<std::uint8_t, kSha256DigestSize> out{};
+    for (int i = 0; i < 8; ++i) {
+        out[static_cast<std::size_t>(i * 4)] = static_cast<std::uint8_t>((h[i] >> 24U) & 0xFFU);
+        out[static_cast<std::size_t>(i * 4 + 1)] = static_cast<std::uint8_t>((h[i] >> 16U) & 0xFFU);
+        out[static_cast<std::size_t>(i * 4 + 2)] = static_cast<std::uint8_t>((h[i] >> 8U) & 0xFFU);
+        out[static_cast<std::size_t>(i * 4 + 3)] = static_cast<std::uint8_t>(h[i] & 0xFFU);
+    }
+    volatile std::uint8_t* msg_ptr = msg.data();
+    for (std::size_t i = 0; i < msg.size(); ++i) {
+        msg_ptr[i] = 0U;
+    }
+    return out;
+}
+
 void SecureWipeRaw(void* data, const std::size_t bytes) {
     volatile std::uint8_t* ptr = static_cast<volatile std::uint8_t*>(data);
     for (std::size_t i = 0; i < bytes; ++i) {
@@ -82,6 +186,25 @@ void SecureWipeVector(std::vector<std::uint8_t>& buffer) {
 
 void SecureWipeRoundKeys(RoundKeys& keys) {
     SecureWipeRaw(keys.data(), sizeof(keys));
+}
+
+std::size_t ProgressStepFor(const std::size_t total) {
+    return std::max<std::size_t>(64U * 1024U, total / 200U);
+}
+
+void EmitProgress(
+    const std::function<void(std::size_t, std::size_t)>& progress,
+    const std::size_t done,
+    const std::size_t total,
+    std::size_t& next_update,
+    const std::size_t update_step) {
+    if (!progress) {
+        return;
+    }
+    if (done >= next_update || done == total) {
+        progress(done, total);
+        next_update = done + update_step;
+    }
 }
 
 inline std::uint8_t XTime(const std::uint8_t value) {
@@ -567,6 +690,254 @@ AnarStatus CryptoEngine::Aes256CtrXor(
 
     SecureWipeArray(counter);
     SecureWipeRoundKeys(round_keys);
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::PqSha256StreamXor(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 16>& nonce,
+    const std::vector<std::uint8_t>& input,
+    std::vector<std::uint8_t>& output,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    constexpr std::array<std::uint8_t, 4> kDomain = {'P', 'Q', '2', '5'};
+    constexpr std::size_t kPrefixBytes = kDomain.size() + 32U + 16U;
+    std::array<std::uint8_t, kPrefixBytes + 8U> seed{};
+
+    std::copy(kDomain.begin(), kDomain.end(), seed.begin());
+    std::copy(key_bytes.begin(), key_bytes.end(), seed.begin() + static_cast<std::ptrdiff_t>(kDomain.size()));
+    std::copy(nonce.begin(), nonce.end(), seed.begin() + static_cast<std::ptrdiff_t>(kDomain.size() + 32U));
+
+    output.resize(input.size());
+    const std::size_t total = input.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    const std::size_t update_step = std::max<std::size_t>(64U * 1024U, total / 200U);
+    std::size_t next_update = update_step;
+    std::size_t offset = 0;
+    std::uint64_t counter = 0;
+    while (offset < total) {
+        for (std::size_t i = 0; i < 8U; ++i) {
+            seed[kPrefixBytes + i] = static_cast<std::uint8_t>((counter >> (i * 8U)) & 0xFFU);
+        }
+
+        auto stream_block = Sha256Digest(seed.data(), seed.size());
+        const std::size_t n = std::min<std::size_t>(stream_block.size(), total - offset);
+        for (std::size_t i = 0; i < n; ++i) {
+            output[offset + i] = static_cast<std::uint8_t>(input[offset + i] ^ stream_block[i]);
+        }
+        SecureWipeArray(stream_block);
+
+        offset += n;
+        ++counter;
+
+        if (progress && (offset >= next_update || offset == total)) {
+            progress(offset, total);
+            next_update = offset + update_step;
+        }
+    }
+
+    SecureWipeArray(seed);
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::ChaCha20Poly1305Encrypt(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 24>& nonce,
+    const std::vector<std::uint8_t>& plaintext,
+    std::vector<std::uint8_t>& out_ciphertext,
+    std::array<std::uint8_t, 16>& out_tag,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    const std::size_t total = plaintext.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    out_ciphertext.resize(total);
+    out_tag.fill(0U);
+    try {
+        CryptoPP::ChaCha20Poly1305::Encryption enc;
+        enc.SetKeyWithIV(key_bytes.data(), key_bytes.size(), nonce.data(), 12);
+        enc.EncryptAndAuthenticate(
+            out_ciphertext.empty() ? nullptr : out_ciphertext.data(),
+            out_tag.data(),
+            out_tag.size(),
+            nonce.data(),
+            12,
+            nullptr,
+            0,
+            plaintext.empty() ? nullptr : plaintext.data(),
+            plaintext.size());
+    } catch (...) {
+        SecureWipeVector(out_ciphertext);
+        SecureWipeArray(out_tag);
+        return AnarStatus::UnknownOp;
+    }
+
+    if (progress) {
+        progress(total, total);
+    }
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::ChaCha20Poly1305DecryptVerify(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 24>& nonce,
+    const std::vector<std::uint8_t>& ciphertext,
+    const std::array<std::uint8_t, 16>& tag,
+    std::vector<std::uint8_t>& out_plaintext,
+    bool& out_auth_ok,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    const std::size_t total = ciphertext.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    out_auth_ok = false;
+    out_plaintext.resize(total);
+    try {
+        CryptoPP::ChaCha20Poly1305::Decryption dec;
+        dec.SetKeyWithIV(key_bytes.data(), key_bytes.size(), nonce.data(), 12);
+        out_auth_ok = dec.DecryptAndVerify(
+            out_plaintext.empty() ? nullptr : out_plaintext.data(),
+            tag.data(),
+            tag.size(),
+            nonce.data(),
+            12,
+            nullptr,
+            0,
+            ciphertext.empty() ? nullptr : ciphertext.data(),
+            ciphertext.size());
+    } catch (...) {
+        SecureWipeVector(out_plaintext);
+        return AnarStatus::UnknownOp;
+    }
+
+    if (!out_auth_ok) {
+        SecureWipeVector(out_plaintext);
+    }
+    if (progress) {
+        progress(total, total);
+    }
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::XChaCha20Poly1305Encrypt(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 24>& nonce,
+    const std::vector<std::uint8_t>& plaintext,
+    std::vector<std::uint8_t>& out_ciphertext,
+    std::array<std::uint8_t, 16>& out_tag,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    const std::size_t total = plaintext.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    out_ciphertext.resize(total);
+    out_tag.fill(0U);
+    try {
+        CryptoPP::XChaCha20Poly1305::Encryption enc;
+        enc.SetKeyWithIV(key_bytes.data(), key_bytes.size(), nonce.data(), nonce.size());
+        enc.EncryptAndAuthenticate(
+            out_ciphertext.empty() ? nullptr : out_ciphertext.data(),
+            out_tag.data(),
+            out_tag.size(),
+            nonce.data(),
+            static_cast<int>(nonce.size()),
+            nullptr,
+            0,
+            plaintext.empty() ? nullptr : plaintext.data(),
+            plaintext.size());
+    } catch (...) {
+        SecureWipeVector(out_ciphertext);
+        SecureWipeArray(out_tag);
+        return AnarStatus::UnknownOp;
+    }
+
+    if (progress) {
+        progress(total, total);
+    }
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::XChaCha20Poly1305DecryptVerify(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 24>& nonce,
+    const std::vector<std::uint8_t>& ciphertext,
+    const std::array<std::uint8_t, 16>& tag,
+    std::vector<std::uint8_t>& out_plaintext,
+    bool& out_auth_ok,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    const std::size_t total = ciphertext.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    out_auth_ok = false;
+    out_plaintext.resize(total);
+    try {
+        CryptoPP::XChaCha20Poly1305::Decryption dec;
+        dec.SetKeyWithIV(key_bytes.data(), key_bytes.size(), nonce.data(), nonce.size());
+        out_auth_ok = dec.DecryptAndVerify(
+            out_plaintext.empty() ? nullptr : out_plaintext.data(),
+            tag.data(),
+            tag.size(),
+            nonce.data(),
+            static_cast<int>(nonce.size()),
+            nullptr,
+            0,
+            ciphertext.empty() ? nullptr : ciphertext.data(),
+            ciphertext.size());
+    } catch (...) {
+        SecureWipeVector(out_plaintext);
+        return AnarStatus::UnknownOp;
+    }
+
+    if (!out_auth_ok) {
+        SecureWipeVector(out_plaintext);
+    }
+    if (progress) {
+        progress(total, total);
+    }
+    return AnarStatus::Ok;
+}
+
+AnarStatus CryptoEngine::Serpent256CtrXor(
+    const std::array<std::uint8_t, 32>& key_bytes,
+    const std::array<std::uint8_t, 16>& nonce,
+    const std::vector<std::uint8_t>& input,
+    std::vector<std::uint8_t>& output,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
+    output.resize(input.size());
+    const std::size_t total = input.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    try {
+        CryptoPP::CTR_Mode<CryptoPP::Serpent>::Encryption enc;
+        enc.SetKeyWithIV(key_bytes.data(), key_bytes.size(), nonce.data(), nonce.size());
+
+        const std::size_t update_step = ProgressStepFor(total);
+        std::size_t next_update = update_step;
+        std::size_t offset = 0;
+        constexpr std::size_t kChunk = 64U * 1024U;
+        while (offset < total) {
+            const std::size_t n = std::min<std::size_t>(kChunk, total - offset);
+            enc.ProcessData(output.data() + offset, input.data() + offset, n);
+            offset += n;
+            EmitProgress(progress, offset, total, next_update, update_step);
+        }
+    } catch (...) {
+        SecureWipeVector(output);
+        return AnarStatus::UnknownOp;
+    }
+
+    if (progress) {
+        progress(total, total);
+    }
     return AnarStatus::Ok;
 }
 

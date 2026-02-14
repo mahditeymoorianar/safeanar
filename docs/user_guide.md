@@ -21,6 +21,13 @@ cmake-build-debug/safeanar.exe --help
 
 ## Command Summary
 
+### List Available Protocols
+
+```bash
+safeanar --list-protocols
+safeanar protocols
+```
+
 ### Encrypt a File
 
 ```bash
@@ -41,6 +48,34 @@ safeanar --decrypt --path secret.enc --out secret.dec --key-file my.key
 ```
 
 For `--protocol otp`, the key file must be at least as large as the input data.
+
+### Encrypt/Decrypt with PQ Mode
+
+```bash
+safeanar --encrypt --path secret.bin --out secret.pq.enc --key "my passphrase" --protocol pq
+safeanar --decrypt --path secret.pq.enc --out secret.dec --key "my passphrase"
+```
+
+### Encrypt/Decrypt with ChaCha20-Poly1305
+
+```bash
+safeanar --encrypt --path secret.bin --out secret.chacha.enc --key "my passphrase" --protocol chacha20poly1305
+safeanar --decrypt --path secret.chacha.enc --out secret.dec --key "my passphrase"
+```
+
+### Encrypt/Decrypt with XChaCha20-Poly1305
+
+```bash
+safeanar --encrypt --path secret.bin --out secret.xchacha.enc --key "my passphrase" --protocol xchacha20poly1305
+safeanar --decrypt --path secret.xchacha.enc --out secret.dec --key "my passphrase"
+```
+
+### Encrypt/Decrypt with Serpent-256 (CTR)
+
+```bash
+safeanar --encrypt --path secret.bin --out secret.serpent.enc --key "my passphrase" --protocol serpent-256
+safeanar --decrypt --path secret.serpent.enc --out secret.dec --key "my passphrase"
+```
 
 ### Encrypt Text
 
@@ -169,12 +204,28 @@ Exactly one of `--key` or `--key-file` is required for encrypt/decrypt.
 ### Protocol
 - `--protocol aes` (default)
 - `--protocol otp`
+- `--protocol pq`
+- `--protocol chacha20poly1305`
+- `--protocol xchacha20poly1305`
+- `--protocol serpent-256` (alias: `serpent256`)
+- `--list-protocols` (or `protocols` subcommand) prints all available protocol names
 
 In this prototype build:
 - `aes` uses AES-256 in CTR mode.
 - `otp` uses direct byte-for-byte XOR and requires `--key-file`.
+- `pq` uses a SHA-256 based stream mode with a 256-bit prepared key and per-file nonce.
+- `pq` is a symmetric post-quantum-resistant mode; it does not provide post-quantum public-key key exchange.
+- `chacha20poly1305` uses ChaCha20-Poly1305 (12-byte nonce + 16-byte Poly1305 tag).
+- `xchacha20poly1305` uses XChaCha20-Poly1305 (24-byte nonce + 16-byte Poly1305 tag).
+- `serpent-256` uses Serpent-256 in CTR mode.
 - For `otp`, key-file size must be at least payload size.
-- Integrity tag is `SHA-256(prepared_key || plaintext)` for both modes.
+- Authentication tag:
+  - `chacha20poly1305` and `xchacha20poly1305`: Poly1305 tag (AEAD verify on decrypt).
+  - `aes`, `otp`, `pq`, `serpent-256`: `SHA-256(prepared_key || plaintext)`.
+
+### Vendored Crypto Dependency
+- `third_party/cryptopp` is vendored in this repository and used for ChaCha20-Poly1305, XChaCha20-Poly1305, and Serpent-256.
+- License is included at `third_party/cryptopp/License.txt`.
 
 ### Padding
 - `--padding-size <size>` Sets exact encrypted output size during `--encrypt`.
@@ -208,7 +259,7 @@ Common errors:
 This Phase 4 CLI is a test-driven prototype focused on integration and argument parsing.
 
 If you need real cryptographic security, do not treat this prototype encryption scheme as final:
-- The current container authentication is a simple SHA-256 tag, not a modern AEAD construction.
+- AEAD is used for `chacha20poly1305` and `xchacha20poly1305`, while other modes still use a SHA-256 container tag.
 - OTP safety depends fully on key-file randomness and strict one-time usage discipline.
 - The `--fast` flag is a compatibility hint; no hardware-specific acceleration path is exposed yet.
 

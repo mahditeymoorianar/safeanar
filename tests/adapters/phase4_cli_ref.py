@@ -11,6 +11,10 @@ MAGIC_CONTAINER = b"SCLI1\x00"
 VERSION = 1
 PROTO_AES = 0
 PROTO_OTP = 1
+PROTO_PQ = 2
+PROTO_CHACHA20POLY1305 = 3
+PROTO_XCHACHA20POLY1305 = 4
+PROTO_SERPENT256 = 5
 KIND_FILE = 0
 KIND_DIR = 1
 KIND_TEXT = 2
@@ -183,7 +187,14 @@ def parse_container(data):
     protocol_id = data[pos + 1]
     kind_id = data[pos + 2]
     pos += 3
-    if version != VERSION or protocol_id not in (PROTO_AES, PROTO_OTP) or kind_id not in (KIND_FILE, KIND_DIR, KIND_TEXT):
+    if version != VERSION or protocol_id not in (
+        PROTO_AES,
+        PROTO_OTP,
+        PROTO_PQ,
+        PROTO_CHACHA20POLY1305,
+        PROTO_XCHACHA20POLY1305,
+        PROTO_SERPENT256,
+    ) or kind_id not in (KIND_FILE, KIND_DIR, KIND_TEXT):
         return None, "InvalidArchive"
     name_len = struct.unpack("<H", data[pos:pos + 2])[0]
     pos += 2
@@ -219,10 +230,21 @@ def encrypt_command(args):
         return 1
 
     protocol = args.protocol.lower()
-    if protocol not in ("aes", "otp"):
+    if protocol not in ("aes", "otp", "pq", "chacha20poly1305", "xchacha20poly1305", "serpent-256", "serpent256"):
         eprint("Invalid protocol")
         return 1
-    proto_id = PROTO_AES if protocol == "aes" else PROTO_OTP
+    if protocol == "aes":
+        proto_id = PROTO_AES
+    elif protocol == "otp":
+        proto_id = PROTO_OTP
+    elif protocol == "pq":
+        proto_id = PROTO_PQ
+    elif protocol == "chacha20poly1305":
+        proto_id = PROTO_CHACHA20POLY1305
+    elif protocol == "xchacha20poly1305":
+        proto_id = PROTO_XCHACHA20POLY1305
+    else:
+        proto_id = PROTO_SERPENT256
 
     if args.text is not None:
         kind = KIND_TEXT
@@ -300,7 +322,19 @@ def decrypt_command(args):
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "protocols":
+        print("Available protocols:")
+        print("  aes")
+        print("  otp")
+        print("  pq")
+        print("  chacha20poly1305")
+        print("  xchacha20poly1305")
+        print("  serpent-256")
+        print("  serpent256")
+        return 0
+
     parser = argparse.ArgumentParser(prog="safeanar")
+    parser.add_argument("--list-protocols", action="store_true")
     parser.add_argument("--encrypt", action="store_true")
     parser.add_argument("--decrypt", action="store_true")
     parser.add_argument("--path")
@@ -309,6 +343,17 @@ def main():
     parser.add_argument("--key")
     parser.add_argument("--protocol", default="aes")
     args = parser.parse_args()
+
+    if args.list_protocols:
+        print("Available protocols:")
+        print("  aes")
+        print("  otp")
+        print("  pq")
+        print("  chacha20poly1305")
+        print("  xchacha20poly1305")
+        print("  serpent-256")
+        print("  serpent256")
+        return 0
 
     if args.encrypt == args.decrypt:
         eprint("Specify exactly one of --encrypt or --decrypt")
@@ -324,4 +369,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

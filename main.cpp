@@ -28,6 +28,7 @@
 #endif
 
 #include "safeanar/anar_status.hpp"
+#include "safeanar/crypto_engine.hpp"
 #include "safeanar/crypto_protocol.hpp"
 #include "safeanar/key_generator.hpp"
 #include "safeanar/protocol_factory.hpp"
@@ -37,13 +38,19 @@
 namespace {
 
 constexpr std::array<char, 6> kContainerMagic = {'S', 'C', 'L', 'I', '1', '\0'};
-constexpr std::uint8_t kContainerVersion = 2;
+constexpr std::uint8_t kContainerVersionV2 = 2;
+constexpr std::uint8_t kContainerVersion = 3;
 constexpr std::uint8_t kProtoAes = 0;
 constexpr std::uint8_t kProtoOtp = 1;
+constexpr std::uint8_t kProtoPq = 2;
+constexpr std::uint8_t kProtoChaCha20Poly1305 = 3;
+constexpr std::uint8_t kProtoXChaCha20Poly1305 = 4;
+constexpr std::uint8_t kProtoSerpent256 = 5;
 constexpr std::uint8_t kKindFile = 0;
 constexpr std::uint8_t kKindDir = 1;
 constexpr std::uint8_t kKindText = 2;
-constexpr std::size_t kContainerNonceSize = 16;
+constexpr std::size_t kContainerNonceSizeV2 = 16;
+constexpr std::size_t kContainerNonceSize = 24;
 
 struct CliOptions {
     bool encrypt = false;
@@ -286,6 +293,34 @@ std::string Utf8FromPath(const std::filesystem::path& value) {
 #else
     return value.generic_string();
 #endif
+}
+
+bool IsAeadProtocol(const std::uint8_t protocol_id) {
+    return protocol_id == kProtoChaCha20Poly1305 || protocol_id == kProtoXChaCha20Poly1305;
+}
+
+std::array<std::uint8_t, 16> ToNonce16(const std::array<std::uint8_t, kContainerNonceSize>& nonce) {
+    std::array<std::uint8_t, 16> out{};
+    std::copy(nonce.begin(), nonce.begin() + 16, out.begin());
+    return out;
+}
+
+std::array<std::uint8_t, 24> ToNonce24(const std::array<std::uint8_t, kContainerNonceSize>& nonce) {
+    std::array<std::uint8_t, 24> out{};
+    std::copy(nonce.begin(), nonce.end(), out.begin());
+    return out;
+}
+
+std::array<std::uint8_t, 16> AuthTag16(const std::array<std::uint8_t, 32>& auth_tag) {
+    std::array<std::uint8_t, 16> out{};
+    std::copy(auth_tag.begin(), auth_tag.begin() + 16, out.begin());
+    return out;
+}
+
+std::array<std::uint8_t, 32> ExpandAuthTag16(const std::array<std::uint8_t, 16>& tag16) {
+    std::array<std::uint8_t, 32> out{};
+    std::copy(tag16.begin(), tag16.end(), out.begin());
+    return out;
 }
 
 #ifdef _WIN32
@@ -610,7 +645,8 @@ std::vector<std::uint8_t> BuildContainer(
 
 bool ParseContainer(const std::vector<std::uint8_t>& bytes, ContainerData& out_data) {
     const std::size_t min_size_v1 = kContainerMagic.size() + 3 + 2 + 8 + 32;
-    const std::size_t min_size_v2 = min_size_v1 + kContainerNonceSize;
+    const std::size_t min_size_v2 = min_size_v1 + kContainerNonceSizeV2;
+    const std::size_t min_size_v3 = min_size_v1 + kContainerNonceSize;
     if (bytes.size() < min_size_v1) {
         return false;
     }
@@ -623,13 +659,21 @@ bool ParseContainer(const std::vector<std::uint8_t>& bytes, ContainerData& out_d
     out_data.version = bytes[pos++];
     out_data.protocol_id = bytes[pos++];
     out_data.kind_id = bytes[pos++];
-    if (out_data.version != 1 && out_data.version != kContainerVersion) {
+    if (out_data.version != 1 && out_data.version != kContainerVersionV2 && out_data.version != kContainerVersion) {
         return false;
     }
-    if (out_data.version == kContainerVersion && bytes.size() < min_size_v2) {
+    if (out_data.version == kContainerVersionV2 && bytes.size() < min_size_v2) {
         return false;
     }
-    if (out_data.protocol_id != kProtoAes && out_data.protocol_id != kProtoOtp) {
+    if (out_data.version == kContainerVersion && bytes.size() < min_size_v3) {
+        return false;
+    }
+    if (out_data.protocol_id != kProtoAes &&
+        out_data.protocol_id != kProtoOtp &&
+        out_data.protocol_id != kProtoPq &&
+        out_data.protocol_id != kProtoChaCha20Poly1305 &&
+        out_data.protocol_id != kProtoXChaCha20Poly1305 &&
+        out_data.protocol_id != kProtoSerpent256) {
         return false;
     }
     if (out_data.kind_id != kKindFile && out_data.kind_id != kKindDir && out_data.kind_id != kKindText) {
@@ -642,7 +686,16 @@ bool ParseContainer(const std::vector<std::uint8_t>& bytes, ContainerData& out_d
     pos += 8;
 
     out_data.nonce.fill(0U);
-    if (out_data.version == kContainerVersion) {
+    if (out_data.version == kContainerVersionV2) {
+        if (pos + kContainerNonceSizeV2 > bytes.size()) {
+            return false;
+        }
+        std::copy(
+            bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+            bytes.begin() + static_cast<std::ptrdiff_t>(pos + kContainerNonceSizeV2),
+            out_data.nonce.begin());
+        pos += kContainerNonceSizeV2;
+    } else if (out_data.version == kContainerVersion) {
         if (pos + kContainerNonceSize > bytes.size()) {
             return false;
         }
@@ -788,6 +841,12 @@ safeanar::AnarStatus CreateProtocolById(
     if (protocol_id == kProtoOtp) {
         return CreateProtocolByName("otp", opts, out_protocol);
     }
+    if (protocol_id == kProtoPq) {
+        return CreateProtocolByName("pq", opts, out_protocol);
+    }
+    if (protocol_id == kProtoSerpent256) {
+        return CreateProtocolByName("serpent-256", opts, out_protocol);
+    }
     return safeanar::AnarStatus::UnknownOp;
 }
 
@@ -797,6 +856,21 @@ safeanar::AnarStatus PrepareProtocolKey(
     std::vector<std::uint8_t>& out_key_bytes) {
     out_key_bytes.clear();
     if (protocol_id == kProtoAes) {
+        const auto digest = Sha256(raw_key_bytes);
+        out_key_bytes.assign(digest.begin(), digest.end());
+        return safeanar::AnarStatus::Ok;
+    }
+    if (protocol_id == kProtoPq) {
+        const auto digest = Sha256(raw_key_bytes);
+        out_key_bytes.assign(digest.begin(), digest.end());
+        return safeanar::AnarStatus::Ok;
+    }
+    if (protocol_id == kProtoChaCha20Poly1305 || protocol_id == kProtoXChaCha20Poly1305) {
+        const auto digest = Sha256(raw_key_bytes);
+        out_key_bytes.assign(digest.begin(), digest.end());
+        return safeanar::AnarStatus::Ok;
+    }
+    if (protocol_id == kProtoSerpent256) {
         const auto digest = Sha256(raw_key_bytes);
         out_key_bytes.assign(digest.begin(), digest.end());
         return safeanar::AnarStatus::Ok;
@@ -816,13 +890,54 @@ safeanar::AnarStatus EncryptPayload(
     const std::vector<std::uint8_t>& plaintext,
     std::vector<std::uint8_t>& out_ciphertext,
     std::vector<std::uint8_t>& out_protocol_key,
+    std::array<std::uint8_t, 32>& out_auth_tag,
+    bool& out_auth_tag_ready,
     const std::function<void(std::size_t, std::size_t)>& progress) {
     out_ciphertext.clear();
     out_protocol_key.clear();
+    out_auth_tag.fill(0U);
+    out_auth_tag_ready = false;
 
     const safeanar::AnarStatus key_status = PrepareProtocolKey(protocol_id, raw_key_bytes, out_protocol_key);
     if (key_status != safeanar::AnarStatus::Ok) {
         return key_status;
+    }
+
+    if (protocol_id == kProtoChaCha20Poly1305 || protocol_id == kProtoXChaCha20Poly1305) {
+        if (out_protocol_key.size() != 32U) {
+            return safeanar::AnarStatus::InvalidKeyLength;
+        }
+        std::array<std::uint8_t, 32> key{};
+        std::copy(out_protocol_key.begin(), out_protocol_key.end(), key.begin());
+        const std::array<std::uint8_t, 24> nonce24 = ToNonce24(nonce);
+        std::array<std::uint8_t, 16> tag16{};
+        safeanar::AnarStatus status = safeanar::AnarStatus::UnknownOp;
+        if (protocol_id == kProtoChaCha20Poly1305) {
+            status = safeanar::CryptoEngine::ChaCha20Poly1305Encrypt(
+                key,
+                nonce24,
+                plaintext,
+                out_ciphertext,
+                tag16,
+                progress);
+        } else {
+            status = safeanar::CryptoEngine::XChaCha20Poly1305Encrypt(
+                key,
+                nonce24,
+                plaintext,
+                out_ciphertext,
+                tag16,
+                progress);
+        }
+        SecureWipeArray(key);
+        if (status != safeanar::AnarStatus::Ok) {
+            SecureWipeArray(tag16);
+            return status;
+        }
+        out_auth_tag = ExpandAuthTag16(tag16);
+        out_auth_tag_ready = true;
+        SecureWipeArray(tag16);
+        return safeanar::AnarStatus::Ok;
     }
 
     std::unique_ptr<safeanar::ICryptoProtocol> protocol;
@@ -833,7 +948,7 @@ safeanar::AnarStatus EncryptPayload(
     if (protocol->RequiresKeyFile() && !opts.key_file.has_value()) {
         return safeanar::AnarStatus::InvalidKeyLength;
     }
-    return protocol->Transform(plaintext, out_protocol_key, nonce, out_ciphertext, progress);
+    return protocol->Transform(plaintext, out_protocol_key, ToNonce16(nonce), out_ciphertext, progress);
 }
 
 safeanar::AnarStatus DecryptPayload(
@@ -842,9 +957,13 @@ safeanar::AnarStatus DecryptPayload(
     const std::vector<std::uint8_t>& raw_key_bytes,
     std::vector<std::uint8_t>& out_plaintext,
     std::vector<std::uint8_t>& out_protocol_key,
+    bool& out_auth_checked,
+    bool& out_auth_ok,
     const std::function<void(std::size_t, std::size_t)>& progress) {
     out_plaintext.clear();
     out_protocol_key.clear();
+    out_auth_checked = false;
+    out_auth_ok = false;
 
     if (container.version == 1) {
         out_protocol_key = raw_key_bytes;
@@ -862,6 +981,41 @@ safeanar::AnarStatus DecryptPayload(
         return key_status;
     }
 
+    if (container.protocol_id == kProtoChaCha20Poly1305 || container.protocol_id == kProtoXChaCha20Poly1305) {
+        if (out_protocol_key.size() != 32U) {
+            return safeanar::AnarStatus::InvalidKeyLength;
+        }
+        std::array<std::uint8_t, 32> key{};
+        std::copy(out_protocol_key.begin(), out_protocol_key.end(), key.begin());
+        const std::array<std::uint8_t, 24> nonce24 = ToNonce24(container.nonce);
+        const std::array<std::uint8_t, 16> tag16 = AuthTag16(container.auth_tag);
+        safeanar::AnarStatus status = safeanar::AnarStatus::UnknownOp;
+        bool auth_ok = false;
+        if (container.protocol_id == kProtoChaCha20Poly1305) {
+            status = safeanar::CryptoEngine::ChaCha20Poly1305DecryptVerify(
+                key,
+                nonce24,
+                container.ciphertext,
+                tag16,
+                out_plaintext,
+                auth_ok,
+                progress);
+        } else {
+            status = safeanar::CryptoEngine::XChaCha20Poly1305DecryptVerify(
+                key,
+                nonce24,
+                container.ciphertext,
+                tag16,
+                out_plaintext,
+                auth_ok,
+                progress);
+        }
+        SecureWipeArray(key);
+        out_auth_checked = true;
+        out_auth_ok = auth_ok;
+        return status;
+    }
+
     std::unique_ptr<safeanar::ICryptoProtocol> protocol;
     const safeanar::AnarStatus create_status = CreateProtocolById(container.protocol_id, opts, protocol);
     if (create_status != safeanar::AnarStatus::Ok || protocol == nullptr) {
@@ -870,7 +1024,7 @@ safeanar::AnarStatus DecryptPayload(
     if (protocol->RequiresKeyFile() && !opts.key_file.has_value()) {
         return safeanar::AnarStatus::InvalidKeyLength;
     }
-    return protocol->Transform(container.ciphertext, out_protocol_key, container.nonce, out_plaintext, progress);
+    return protocol->Transform(container.ciphertext, out_protocol_key, ToNonce16(container.nonce), out_plaintext, progress);
 }
 
 bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& error) {
@@ -977,7 +1131,13 @@ bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& erro
             error = "Missing required argument --out";
             return false;
         }
-        if (opts.protocol != "aes" && opts.protocol != "otp") {
+        if (opts.protocol != "aes" &&
+            opts.protocol != "otp" &&
+            opts.protocol != "pq" &&
+            opts.protocol != "chacha20poly1305" &&
+            opts.protocol != "xchacha20poly1305" &&
+            opts.protocol != "serpent-256" &&
+            opts.protocol != "serpent256") {
             error = "Invalid protocol";
             return false;
         }
@@ -1149,18 +1309,21 @@ void PrintHelp(std::ostream& out) {
     out << "SafeAnar (prototype) - file/directory/text encryption utility\n\n";
     out << "Usage:\n";
     out << "  safeanar --encrypt --path <file|dir> --out <enc_file> (--key <passphrase>|--key-file <path>)\n";
-    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast] [--log]\n";
+    out << "           [--protocol aes|otp|pq|chacha20poly1305|xchacha20poly1305|serpent-256] [--padding-size <size>] [--fast] [--log]\n";
     out << "  safeanar --encrypt --text <text>     --out <enc_file> (--key <passphrase>|--key-file <path>)\n";
-    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast] [--log]\n";
+    out << "           [--protocol aes|otp|pq|chacha20poly1305|xchacha20poly1305|serpent-256] [--padding-size <size>] [--fast] [--log]\n";
     out << "  safeanar --decrypt --path <enc_file> --out <out_path> (--key <passphrase>|--key-file <path>) [--fast] [--log]\n";
     out << "  safeanar --gen-key <words|chars> [--count N|--length N]\n";
     out << "  safeanar gen-key <words|chars> [--count N|--length N]\n\n";
+    out << "  safeanar --list-protocols\n";
+    out << "  safeanar protocols\n\n";
     out << "  safeanar delete --path <file> [--passes N]\n\n";
 
     out << "Options:\n";
     out << "  --encrypt            Encrypt input to --out\n";
     out << "  --decrypt            Decrypt --path to --out\n";
     out << "  --gen-key <mode>     Generate random passphrase (modes: words, chars)\n";
+    out << "  --list-protocols     Print available protocol names\n";
     out << "  --count <N>          Word count for key generation (default 32)\n";
     out << "  --length <N>         Char length for key generation (default 43)\n";
     out << "  --path <path>        Input path (encrypt: file/dir, decrypt: encrypted file)\n";
@@ -1168,7 +1331,7 @@ void PrintHelp(std::ostream& out) {
     out << "  --out <path>         Output (encrypt: encrypted file, decrypt: file or directory)\n";
     out << "  --key <string>       Passphrase (UTF-8 string)\n";
     out << "  --key-file <path>    Key bytes file (required size >= data for otp mode)\n";
-    out << "  --protocol <name>    aes (default) or otp\n";
+    out << "  --protocol <name>    aes (default), otp, pq, chacha20poly1305, xchacha20poly1305, serpent-256\n";
     out << "  --padding-size <N>   Encrypt output to exact size (e.g. 100MB, 1GB)\n";
     out << "  --fast               Enable fast path hint (if available)\n";
     out << "  --log                Show minimal runtime logs/progress\n";
@@ -1180,6 +1343,10 @@ void PrintHelp(std::ostream& out) {
     out << "  safeanar --encrypt --path secret.bin --out secret.pad.enc --key \"k\" --padding-size 100MB\n";
     out << "  safeanar --encrypt --path secret.bin --out secret.enc --key-file one_time.key --protocol otp\n";
     out << "  safeanar --decrypt --path secret.enc --out secret.dec --key-file one_time.key\n";
+    out << "  safeanar --encrypt --path secret.bin --out secret.pq.enc --key \"k\" --protocol pq\n";
+    out << "  safeanar --encrypt --path secret.bin --out secret.chacha.enc --key \"k\" --protocol chacha20poly1305\n";
+    out << "  safeanar --encrypt --path secret.bin --out secret.xchacha.enc --key \"k\" --protocol xchacha20poly1305\n";
+    out << "  safeanar --encrypt --path secret.bin --out secret.serpent.enc --key \"k\" --protocol serpent-256\n";
     out << "  safeanar --encrypt --text \"hello\" --out msg.enc --key-file one_time.key --protocol otp\n";
     out << "  safeanar --encrypt --path my_folder --out folder.enc --key \"k\"\n";
     out << "  safeanar --decrypt --path folder.enc --out restored_folder --key \"k\" --fast\n";
@@ -1187,6 +1354,8 @@ void PrintHelp(std::ostream& out) {
     out << "  safeanar --gen-key chars\n";
     out << "  safeanar gen-key words --count 16\n";
     out << "  safeanar gen-key chars --length 64\n\n";
+    out << "  safeanar --list-protocols\n";
+    out << "  safeanar protocols\n\n";
     out << "  safeanar delete --path old_secret.bin\n";
     out << "  safeanar delete --path old_secret.bin --passes 9\n\n";
 
@@ -1225,8 +1394,30 @@ void PrintKeygenHelp(std::ostream& out) {
     out << "  --help, -h          Show this help\n";
 }
 
+void PrintProtocols(std::ostream& out) {
+    out << "Available protocols:\n";
+    out << "  aes                 AES-256 CTR\n";
+    out << "  otp                 One-time-pad XOR (requires --key-file)\n";
+    out << "  pq                  SHA-256 stream XOR mode\n";
+    out << "  chacha20poly1305    ChaCha20-Poly1305 AEAD\n";
+    out << "  xchacha20poly1305   XChaCha20-Poly1305 AEAD\n";
+    out << "  serpent-256         Serpent-256 CTR\n";
+    out << "  serpent256          Alias of serpent-256\n";
+}
+
 int EncryptFlow(const CliOptions& opts) {
-    const std::uint8_t protocol_id = opts.protocol == "otp" ? kProtoOtp : kProtoAes;
+    std::uint8_t protocol_id = kProtoAes;
+    if (opts.protocol == "otp") {
+        protocol_id = kProtoOtp;
+    } else if (opts.protocol == "pq") {
+        protocol_id = kProtoPq;
+    } else if (opts.protocol == "chacha20poly1305") {
+        protocol_id = kProtoChaCha20Poly1305;
+    } else if (opts.protocol == "xchacha20poly1305") {
+        protocol_id = kProtoXChaCha20Poly1305;
+    } else if (opts.protocol == "serpent-256" || opts.protocol == "serpent256") {
+        protocol_id = kProtoSerpent256;
+    }
 
     std::uint8_t kind_id = kKindText;
     std::string name;
@@ -1321,6 +1512,8 @@ int EncryptFlow(const CliOptions& opts) {
             }
         };
     }
+    std::array<std::uint8_t, 32> auth_tag{};
+    bool auth_tag_ready = false;
     const safeanar::AnarStatus cipher_status = EncryptPayload(
         opts,
         protocol_id,
@@ -1329,6 +1522,8 @@ int EncryptFlow(const CliOptions& opts) {
         plaintext,
         ciphertext,
         protocol_key_bytes,
+        auth_tag,
+        auth_tag_ready,
         encrypt_progress);
     if (opts.log && encrypt_percent >= 0 && encrypt_percent < 100) {
         std::cerr << "\n";
@@ -1340,7 +1535,9 @@ int EncryptFlow(const CliOptions& opts) {
     }
     CliLog(opts, "Encryption complete");
 
-    const auto auth_tag = Sha256(Concat(protocol_key_bytes, plaintext));
+    if (!auth_tag_ready) {
+        auth_tag = Sha256(Concat(protocol_key_bytes, plaintext));
+    }
     container_bytes = BuildContainer(protocol_id, kind_id, name, nonce, auth_tag, ciphertext);
     if (container_bytes.empty()) {
         std::cerr << safeanar::ToString(safeanar::AnarStatus::FileIOError) << "\n";
@@ -1426,12 +1623,16 @@ int DecryptFlow(const CliOptions& opts) {
             }
         };
     }
+    bool auth_checked = false;
+    bool auth_ok = false;
     const safeanar::AnarStatus cipher_status = DecryptPayload(
         opts,
         container,
         raw_key_bytes,
         plaintext,
         protocol_key_bytes,
+        auth_checked,
+        auth_ok,
         decrypt_progress);
     if (opts.log && decrypt_percent >= 0 && decrypt_percent < 100) {
         std::cerr << "\n";
@@ -1443,9 +1644,11 @@ int DecryptFlow(const CliOptions& opts) {
     }
     CliLog(opts, "Decryption complete");
 
-    auto expected_tag = Sha256(Concat(protocol_key_bytes, plaintext));
-    const bool auth_ok = ConstantTimeEqual(expected_tag, container.auth_tag);
-    SecureWipeArray(expected_tag);
+    if (!auth_checked) {
+        auto expected_tag = Sha256(Concat(protocol_key_bytes, plaintext));
+        auth_ok = ConstantTimeEqual(expected_tag, container.auth_tag);
+        SecureWipeArray(expected_tag);
+    }
     if (!auth_ok) {
         RandomAuthFailureDelay();
         std::cerr << "Authentication Failed\n";
@@ -1524,6 +1727,10 @@ int KeygenFlow(const KeygenOptions& opts) {
 }  // namespace
 
 int RunCliMain(const int argc, char* argv[]) {
+    if (argc >= 2 && (std::string(argv[1]) == "protocols" || std::string(argv[1]) == "--list-protocols")) {
+        PrintProtocols(std::cout);
+        return 0;
+    }
     if (argc >= 2 && std::string(argv[1]) == "delete") {
         DeleteOptions opts;
         std::string error;
