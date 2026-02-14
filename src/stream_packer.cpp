@@ -83,8 +83,27 @@ bool FromLittle64(std::istream& in, std::uint64_t& value) {
     return true;
 }
 
+std::filesystem::path PathFromUtf8(const std::string& value) {
+#ifdef _WIN32
+    const auto* begin = reinterpret_cast<const char8_t*>(value.data());
+    const auto* end = begin + value.size();
+    return std::filesystem::path(std::u8string(begin, end));
+#else
+    return std::filesystem::path(value);
+#endif
+}
+
+std::string Utf8FromPath(const std::filesystem::path& value) {
+#ifdef _WIN32
+    const std::u8string u8 = value.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+#else
+    return value.generic_string();
+#endif
+}
+
 std::string NormalizeRel(const std::filesystem::path& p) {
-    std::string s = p.generic_string();
+    std::string s = Utf8FromPath(p);
     std::replace(s.begin(), s.end(), '\\', '/');
     return s;
 }
@@ -183,11 +202,11 @@ AnarStatus StreamPacker::PackPath(
     out_entry_count = 0;
     out_bytes_written = 0;
 
-    const std::filesystem::path input(input_path);
+    const std::filesystem::path input = PathFromUtf8(input_path);
     std::vector<std::pair<std::string, std::filesystem::path>> entries;
 
     if (IsRegularFile(input)) {
-        const std::string rel = input.filename().generic_string();
+        const std::string rel = Utf8FromPath(input.filename());
         if (!ValidateRelativePath(rel)) {
             return AnarStatus::InvalidPath;
         }
@@ -226,7 +245,7 @@ AnarStatus StreamPacker::PackPath(
         return AnarStatus::InvalidPath;
     }
 
-    std::ofstream out(output_path, std::ios::binary);
+    std::ofstream out(PathFromUtf8(output_path), std::ios::binary);
     if (!out.is_open()) {
         return AnarStatus::FileIOError;
     }
@@ -290,11 +309,11 @@ AnarStatus StreamPacker::PackPathToBytes(
     out_archive_bytes.clear();
     out_entry_count = 0;
 
-    const std::filesystem::path input(input_path);
+    const std::filesystem::path input = PathFromUtf8(input_path);
     std::vector<std::pair<std::string, std::filesystem::path>> entries;
 
     if (IsRegularFile(input)) {
-        const std::string rel = input.filename().generic_string();
+        const std::string rel = Utf8FromPath(input.filename());
         if (!ValidateRelativePath(rel)) {
             return AnarStatus::InvalidPath;
         }
@@ -379,7 +398,7 @@ AnarStatus StreamPacker::PackPathToBytes(
 AnarStatus StreamPacker::InspectArchive(const std::string& input_path, std::vector<ArchiveEntry>& out_entries) {
     out_entries.clear();
 
-    std::ifstream in(input_path, std::ios::binary);
+    std::ifstream in(PathFromUtf8(input_path), std::ios::binary);
     if (!in.is_open()) {
         return AnarStatus::FileIOError;
     }
@@ -467,17 +486,18 @@ AnarStatus StreamPacker::UnpackPath(
         return inspect_status;
     }
 
-    std::ifstream in(input_path, std::ios::binary);
+    std::ifstream in(PathFromUtf8(input_path), std::ios::binary);
     if (!in.is_open()) {
         return AnarStatus::FileIOError;
     }
 
     std::error_code ec;
-    std::filesystem::create_directories(output_dir, ec);
+    const std::filesystem::path out_dir_path = PathFromUtf8(output_dir);
+    std::filesystem::create_directories(out_dir_path, ec);
     if (ec) {
         return AnarStatus::FileIOError;
     }
-    const std::filesystem::path base = std::filesystem::absolute(output_dir, ec);
+    const std::filesystem::path base = std::filesystem::absolute(out_dir_path, ec);
     if (ec) {
         return AnarStatus::FileIOError;
     }
@@ -489,12 +509,12 @@ AnarStatus StreamPacker::UnpackPath(
         }
 
         std::filesystem::path out_path = base;
-        std::filesystem::path rel(entry.path);
+        std::filesystem::path rel = PathFromUtf8(entry.path);
         out_path /= rel;
         out_path = out_path.lexically_normal();
 
-        const auto base_str = base.generic_string();
-        const auto out_str = out_path.generic_string();
+        const auto base_str = Utf8FromPath(base);
+        const auto out_str = Utf8FromPath(out_path);
         if (!(out_str == base_str || (out_str.rfind(base_str + "/", 0) == 0))) {
             return AnarStatus::InvalidArchive;
         }
@@ -552,11 +572,12 @@ AnarStatus StreamPacker::UnpackBytesToPath(
     }
 
     std::error_code ec;
-    std::filesystem::create_directories(output_dir, ec);
+    const std::filesystem::path out_dir_path = PathFromUtf8(output_dir);
+    std::filesystem::create_directories(out_dir_path, ec);
     if (ec) {
         return AnarStatus::FileIOError;
     }
-    const std::filesystem::path base = std::filesystem::absolute(output_dir, ec);
+    const std::filesystem::path base = std::filesystem::absolute(out_dir_path, ec);
     if (ec) {
         return AnarStatus::FileIOError;
     }
@@ -586,10 +607,10 @@ AnarStatus StreamPacker::UnpackBytesToPath(
             return AnarStatus::CorruptInput;
         }
 
-        std::filesystem::path out_path = base / std::filesystem::path(rel);
+        std::filesystem::path out_path = base / PathFromUtf8(rel);
         out_path = out_path.lexically_normal();
-        const auto base_str = base.generic_string();
-        const auto out_str = out_path.generic_string();
+        const auto base_str = Utf8FromPath(base);
+        const auto out_str = Utf8FromPath(out_path);
         if (!(out_str == base_str || (out_str.rfind(base_str + "/", 0) == 0))) {
             return AnarStatus::InvalidArchive;
         }
@@ -631,7 +652,7 @@ AnarStatus StreamPacker::PadFile(
     out_real_size = 0;
     out_bytes_written = 0;
 
-    const std::filesystem::path input(input_path);
+    const std::filesystem::path input = PathFromUtf8(input_path);
     if (!IsRegularFile(input)) {
         return AnarStatus::InvalidPath;
     }
@@ -648,8 +669,8 @@ AnarStatus StreamPacker::PadFile(
         return AnarStatus::InvalidPaddingTarget;
     }
 
-    std::ifstream in(input_path, std::ios::binary);
-    std::ofstream out(output_path, std::ios::binary);
+    std::ifstream in(input, std::ios::binary);
+    std::ofstream out(PathFromUtf8(output_path), std::ios::binary);
     if (!in.is_open() || !out.is_open()) {
         return AnarStatus::FileIOError;
     }
@@ -712,7 +733,7 @@ AnarStatus StreamPacker::InspectPadded(
     out_real_size = 0;
     out_total_size = 0;
 
-    std::ifstream in(input_path, std::ios::binary);
+    std::ifstream in(PathFromUtf8(input_path), std::ios::binary);
     if (!in.is_open()) {
         return AnarStatus::FileIOError;
     }
@@ -768,8 +789,8 @@ AnarStatus StreamPacker::UnpadFile(
         return inspect_status;
     }
 
-    std::ifstream in(input_path, std::ios::binary);
-    std::ofstream out(output_path, std::ios::binary);
+    std::ifstream in(PathFromUtf8(input_path), std::ios::binary);
+    std::ofstream out(PathFromUtf8(output_path), std::ios::binary);
     if (!in.is_open() || !out.is_open()) {
         return AnarStatus::FileIOError;
     }

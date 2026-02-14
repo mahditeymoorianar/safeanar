@@ -530,11 +530,19 @@ AnarStatus CryptoEngine::Aes256CtrXor(
     const std::array<std::uint8_t, 32>& key_bytes,
     const std::array<std::uint8_t, 16>& nonce,
     const std::vector<std::uint8_t>& input,
-    std::vector<std::uint8_t>& output) {
+    std::vector<std::uint8_t>& output,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
     RoundKeys round_keys = ExpandKey256(key_bytes);
     std::array<std::uint8_t, kAesBlockSize> counter = nonce;
 
     output.resize(input.size());
+    const std::size_t total = input.size();
+    if (progress) {
+        progress(0, total);
+    }
+
+    const std::size_t update_step = std::max<std::size_t>(64U * 1024U, total / 200U);
+    std::size_t next_update = update_step;
     std::size_t offset = 0;
     while (offset < input.size()) {
         auto keystream_block = EncryptBlock(round_keys, counter);
@@ -544,6 +552,10 @@ AnarStatus CryptoEngine::Aes256CtrXor(
         }
         SecureWipeArray(keystream_block);
         offset += n;
+        if (progress && (offset >= next_update || offset == total)) {
+            progress(offset, total);
+            next_update = offset + update_step;
+        }
 
         for (int i = static_cast<int>(counter.size()) - 1; i >= 0; --i) {
             counter[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(counter[static_cast<std::size_t>(i)] + 1U);
@@ -561,13 +573,28 @@ AnarStatus CryptoEngine::Aes256CtrXor(
 AnarStatus CryptoEngine::OtpXorBytes(
     const std::vector<std::uint8_t>& input,
     const std::vector<std::uint8_t>& key_bytes,
-    std::vector<std::uint8_t>& output) {
+    std::vector<std::uint8_t>& output,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
     if (key_bytes.size() < input.size()) {
         return AnarStatus::KeyTooShort;
     }
-    output.resize(input.size());
-    for (std::size_t i = 0; i < input.size(); ++i) {
-        output[i] = static_cast<std::uint8_t>(input[i] ^ key_bytes[i]);
+    const std::size_t total = input.size();
+    output.resize(total);
+    if (progress) {
+        progress(0, total);
+    }
+
+    constexpr std::size_t kOtpChunkBytes = 64U * 1024U;
+    std::size_t offset = 0;
+    while (offset < total) {
+        const std::size_t n = std::min<std::size_t>(kOtpChunkBytes, total - offset);
+        for (std::size_t i = 0; i < n; ++i) {
+            output[offset + i] = static_cast<std::uint8_t>(input[offset + i] ^ key_bytes[offset + i]);
+        }
+        offset += n;
+        if (progress) {
+            progress(offset, total);
+        }
     }
     return AnarStatus::Ok;
 }

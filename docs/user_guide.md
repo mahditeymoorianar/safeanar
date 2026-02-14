@@ -185,6 +185,11 @@ In this prototype build:
 - `--fast` enables fast-path hinting when available.
 - Current prototype behavior is output-compatible with non-fast mode.
 
+### Logging
+- `--log` prints minimal runtime logs for encrypt/decrypt flows.
+- During encrypt/decrypt, it shows a live percentage line.
+- For directory encrypt, it logs packing into the internal archive stream before encryption.
+
 ## Errors and Exit Codes
 
 SafeAnar returns:

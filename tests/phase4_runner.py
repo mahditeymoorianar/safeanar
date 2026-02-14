@@ -143,6 +143,59 @@ def test_default_protocol(ctx):
         assert_equal(sha256_file(src), sha256_file(dec), "default protocol roundtrip mismatch")
 
 
+def test_quoted_path_and_out_values(ctx):
+    with tempfile.TemporaryDirectory(prefix="safeanar phase4 ") as td:
+        src = os.path.join(td, "plain input.bin")
+        enc = os.path.join(td, "cipher output.enc")
+        dec = os.path.join(td, "restored output.bin")
+        create_random_file(src, 2048)
+
+        ensure_ok(
+            run_cli(
+                ctx,
+                [
+                    "--encrypt",
+                    "--path",
+                    f"\"{src}\"",
+                    "--out",
+                    f"\"{enc}\"",
+                    "--key",
+                    "quoted-key",
+                ],
+            )
+        )
+        ensure_ok(
+            run_cli(
+                ctx,
+                [
+                    "--decrypt",
+                    "--path",
+                    f"\"{enc}\"",
+                    "--out",
+                    f"\"{dec}\"",
+                    "--key",
+                    "quoted-key",
+                ],
+            )
+        )
+        assert_equal(sha256_file(src), sha256_file(dec), "quoted path/out roundtrip mismatch")
+
+
+def test_unicode_path_roundtrip(ctx):
+    with tempfile.TemporaryDirectory(prefix="safeanar unicode ") as td:
+        src = os.path.join(td, "حسن کچل")
+        enc = os.path.join(td, "unicode.enc")
+        out = os.path.join(td, "خروجی")
+        os.makedirs(src, exist_ok=True)
+        create_random_file(os.path.join(src, "پرونده.bin"), 8192)
+        with open(os.path.join(src, "متن.txt"), "wb") as f:
+            f.write("سلام دنیا".encode("utf-8"))
+
+        ensure_ok(run_cli(ctx, ["--encrypt", "--path", f"\"{src}\"", "--out", enc, "--key", "unicode-key"]))
+        ensure_ok(run_cli(ctx, ["--decrypt", "--path", enc, "--out", f"\"{out}\"", "--key", "unicode-key"]))
+        assert_equal(snapshot_dir(src), snapshot_dir(out), "unicode path roundtrip mismatch")
+
+
 def test_otp_protocol(ctx):
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, "otp.bin")
@@ -454,6 +507,8 @@ def build_tests():
         ("AK4-E2E-002", "Text encrypt/decrypt round-trip", test_text_roundtrip, False),
         ("AK4-E2E-003", "Directory portability workflow", test_directory_portability, False),
         ("AK4-E2E-004", "Default protocol works", test_default_protocol, False),
+        ("AK4-E2E-021", "Quoted --path/--out values with whitespace work", test_quoted_path_and_out_values, False),
+        ("AK4-E2E-022", "Unicode paths round-trip", test_unicode_path_roundtrip, False),
         ("AK4-E2E-005", "Explicit OTP protocol with key-file works", test_otp_protocol, False),
         ("AK4-E2E-006", "OTP with passphrase is rejected", test_otp_with_passphrase_rejected, False),
         ("AK4-FLG-001", "Key-file AES round-trip", test_keyfile_aes_roundtrip, False),

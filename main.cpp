@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -14,6 +15,17 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#ifdef DeleteFile
+#undef DeleteFile
+#endif
+#endif
 
 #include "safeanar/anar_status.hpp"
 #include "safeanar/crypto_protocol.hpp"
@@ -38,6 +50,7 @@ struct CliOptions {
     bool decrypt = false;
     bool help = false;
     bool fast = false;
+    bool log = false;
     std::optional<std::string> path;
     std::optional<std::string> text;
     std::optional<std::string> out;
@@ -244,6 +257,86 @@ bool ParseByteSize(const std::string& text, std::uint64_t& out_bytes) {
     return out_bytes > 0;
 }
 
+std::string UnquotePathArg(std::string value) {
+    if (value.size() < 2) {
+        return value;
+    }
+    const char first = value.front();
+    const char last = value.back();
+    if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+        return value.substr(1, value.size() - 2);
+    }
+    return value;
+}
+
+std::filesystem::path PathFromUtf8(const std::string& value) {
+#ifdef _WIN32
+    const auto* begin = reinterpret_cast<const char8_t*>(value.data());
+    const auto* end = begin + value.size();
+    return std::filesystem::path(std::u8string(begin, end));
+#else
+    return std::filesystem::path(value);
+#endif
+}
+
+std::string Utf8FromPath(const std::filesystem::path& value) {
+#ifdef _WIN32
+    const std::u8string u8 = value.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+#else
+    return value.generic_string();
+#endif
+}
+
+#ifdef _WIN32
+bool WideToUtf8(const wchar_t* input, std::string& out) {
+    out.clear();
+    if (input == nullptr) {
+        return false;
+    }
+    const int required = WideCharToMultiByte(CP_UTF8, 0, input, -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 0) {
+        return false;
+    }
+    std::vector<char> converted(static_cast<std::size_t>(required), '\0');
+    const int written = WideCharToMultiByte(CP_UTF8, 0, input, -1, converted.data(), required, nullptr, nullptr);
+    if (written <= 0) {
+        return false;
+    }
+    out.assign(converted.data(), static_cast<std::size_t>(written - 1));
+    return true;
+}
+
+bool BuildUtf8ArgsFromCommandLine(std::vector<std::string>& out_args) {
+    out_args.clear();
+    int wide_argc = 0;
+    LPWSTR* wide_argv = CommandLineToArgvW(GetCommandLineW(), &wide_argc);
+    if (wide_argv == nullptr || wide_argc <= 0) {
+        return false;
+    }
+
+    out_args.reserve(static_cast<std::size_t>(wide_argc));
+    bool ok = true;
+    for (int i = 0; i < wide_argc; ++i) {
+        std::string converted;
+        if (!WideToUtf8(wide_argv[i], converted)) {
+            ok = false;
+            break;
+        }
+        out_args.push_back(std::move(converted));
+    }
+    LocalFree(wide_argv);
+    return ok;
+}
+#endif
+
+void CliLog(const CliOptions& opts, const std::string& message) {
+    if (!opts.log) {
+        return;
+    }
+    std::cerr << "[log] " << message << "\n";
+}
+
 void SecureWipeBytes(std::vector<std::uint8_t>& bytes) {
     volatile std::uint8_t* ptr = bytes.data();
     for (std::size_t i = 0; i < bytes.size(); ++i) {
@@ -311,7 +404,8 @@ bool FillRandomBytes(std::uint8_t* out, const std::size_t length) {
 }
 
 bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out) {
-    std::ifstream in(path, std::ios::binary);
+    const std::filesystem::path p = PathFromUtf8(path);
+    std::ifstream in(p, std::ios::binary);
     if (!in.is_open()) {
         return false;
     }
@@ -334,7 +428,7 @@ bool ReadFileBytes(const std::string& path, std::vector<std::uint8_t>& out) {
 
 bool WriteFileBytes(const std::string& path, const std::vector<std::uint8_t>& bytes) {
     std::error_code ec;
-    const std::filesystem::path p(path);
+    const std::filesystem::path p = PathFromUtf8(path);
     const auto parent = p.parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, ec);
@@ -342,7 +436,7 @@ bool WriteFileBytes(const std::string& path, const std::vector<std::uint8_t>& by
             return false;
         }
     }
-    std::ofstream out(path, std::ios::binary);
+    std::ofstream out(p, std::ios::binary);
     if (!out.is_open()) {
         return false;
     }
@@ -372,12 +466,12 @@ std::string MakeTempPath(const std::string_view prefix) {
     }
     name += ".tmp";
 
-    return (dir / name).string();
+    return Utf8FromPath(dir / name);
 }
 
 bool HasSufficientOutputSpace(const std::string& output_path, const std::uint64_t required_bytes) {
     std::error_code ec;
-    const std::filesystem::path out(output_path);
+    const std::filesystem::path out = PathFromUtf8(output_path);
     std::filesystem::path parent = out.parent_path();
     if (parent.empty()) {
         parent = ".";
@@ -609,7 +703,7 @@ safeanar::AnarStatus WriteContainerOutput(const std::vector<std::uint8_t>& conta
     }
 
     std::error_code ec;
-    const std::filesystem::path out_path(*opts.out);
+    const std::filesystem::path out_path = PathFromUtf8(*opts.out);
     const auto parent = out_path.parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, ec);
@@ -618,7 +712,7 @@ safeanar::AnarStatus WriteContainerOutput(const std::vector<std::uint8_t>& conta
         }
     }
 
-    std::ofstream out(*opts.out, std::ios::binary);
+    std::ofstream out(out_path, std::ios::binary);
     if (!out.is_open()) {
         return safeanar::AnarStatus::FileIOError;
     }
@@ -721,7 +815,8 @@ safeanar::AnarStatus EncryptPayload(
     const std::array<std::uint8_t, kContainerNonceSize>& nonce,
     const std::vector<std::uint8_t>& plaintext,
     std::vector<std::uint8_t>& out_ciphertext,
-    std::vector<std::uint8_t>& out_protocol_key) {
+    std::vector<std::uint8_t>& out_protocol_key,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
     out_ciphertext.clear();
     out_protocol_key.clear();
 
@@ -738,7 +833,7 @@ safeanar::AnarStatus EncryptPayload(
     if (protocol->RequiresKeyFile() && !opts.key_file.has_value()) {
         return safeanar::AnarStatus::InvalidKeyLength;
     }
-    return protocol->Transform(plaintext, out_protocol_key, nonce, out_ciphertext);
+    return protocol->Transform(plaintext, out_protocol_key, nonce, out_ciphertext, progress);
 }
 
 safeanar::AnarStatus DecryptPayload(
@@ -746,7 +841,8 @@ safeanar::AnarStatus DecryptPayload(
     const ContainerData& container,
     const std::vector<std::uint8_t>& raw_key_bytes,
     std::vector<std::uint8_t>& out_plaintext,
-    std::vector<std::uint8_t>& out_protocol_key) {
+    std::vector<std::uint8_t>& out_protocol_key,
+    const std::function<void(std::size_t, std::size_t)>& progress) {
     out_plaintext.clear();
     out_protocol_key.clear();
 
@@ -774,7 +870,7 @@ safeanar::AnarStatus DecryptPayload(
     if (protocol->RequiresKeyFile() && !opts.key_file.has_value()) {
         return safeanar::AnarStatus::InvalidKeyLength;
     }
-    return protocol->Transform(container.ciphertext, out_protocol_key, container.nonce, out_plaintext);
+    return protocol->Transform(container.ciphertext, out_protocol_key, container.nonce, out_plaintext, progress);
 }
 
 bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& error) {
@@ -795,6 +891,8 @@ bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& erro
             opts.decrypt = true;
         } else if (arg == "--fast") {
             opts.fast = true;
+        } else if (arg == "--log") {
+            opts.log = true;
         } else if (arg == "--help" || arg == "-h") {
             opts.help = true;
         } else if (arg == "--path") {
@@ -802,7 +900,7 @@ bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& erro
             if (!require_value(v)) {
                 return false;
             }
-            opts.path = std::move(v);
+            opts.path = UnquotePathArg(std::move(v));
         } else if (arg == "--text") {
             std::string v;
             if (!require_value(v)) {
@@ -814,7 +912,7 @@ bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& erro
             if (!require_value(v)) {
                 return false;
             }
-            opts.out = std::move(v);
+            opts.out = UnquotePathArg(std::move(v));
         } else if (arg == "--key") {
             std::string v;
             if (!require_value(v)) {
@@ -826,7 +924,7 @@ bool ParseArgs(const int argc, char* argv[], CliOptions& opts, std::string& erro
             if (!require_value(v)) {
                 return false;
             }
-            opts.key_file = std::move(v);
+            opts.key_file = UnquotePathArg(std::move(v));
         } else if (arg == "--padding-size") {
             std::string v;
             if (!require_value(v)) {
@@ -932,7 +1030,7 @@ bool ParseDeleteArgs(const int argc, char* argv[], DeleteOptions& opts, std::str
             if (!require_value(value)) {
                 return false;
             }
-            opts.path = std::move(value);
+            opts.path = UnquotePathArg(std::move(value));
         } else if (arg == "--passes") {
             std::string value;
             if (!require_value(value)) {
@@ -1051,10 +1149,10 @@ void PrintHelp(std::ostream& out) {
     out << "SafeAnar (prototype) - file/directory/text encryption utility\n\n";
     out << "Usage:\n";
     out << "  safeanar --encrypt --path <file|dir> --out <enc_file> (--key <passphrase>|--key-file <path>)\n";
-    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast]\n";
+    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast] [--log]\n";
     out << "  safeanar --encrypt --text <text>     --out <enc_file> (--key <passphrase>|--key-file <path>)\n";
-    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast]\n";
-    out << "  safeanar --decrypt --path <enc_file> --out <out_path> (--key <passphrase>|--key-file <path>) [--fast]\n";
+    out << "           [--protocol aes|otp] [--padding-size <size>] [--fast] [--log]\n";
+    out << "  safeanar --decrypt --path <enc_file> --out <out_path> (--key <passphrase>|--key-file <path>) [--fast] [--log]\n";
     out << "  safeanar --gen-key <words|chars> [--count N|--length N]\n";
     out << "  safeanar gen-key <words|chars> [--count N|--length N]\n\n";
     out << "  safeanar delete --path <file> [--passes N]\n\n";
@@ -1073,6 +1171,7 @@ void PrintHelp(std::ostream& out) {
     out << "  --protocol <name>    aes (default) or otp\n";
     out << "  --padding-size <N>   Encrypt output to exact size (e.g. 100MB, 1GB)\n";
     out << "  --fast               Enable fast path hint (if available)\n";
+    out << "  --log                Show minimal runtime logs/progress\n";
     out << "  --help, -h           Show this help\n\n";
 
     out << "Examples:\n";
@@ -1093,6 +1192,7 @@ void PrintHelp(std::ostream& out) {
 
     out << "Notes:\n";
     out << "  - This build is a Phase 1-4 prototype implementation.\n";
+    out << "  - Path flags accept both plain and quoted values (e.g. C:/data/in.bin or \"C:/data/in.bin\").\n";
     out << "  - Wrong keys fail with a generic: Authentication Failed\n";
     out << "  - Secure delete is best effort; modern filesystems/SSDs may retain traces outside file control.\n";
     out << "  - For more details, see docs/user_guide.md\n";
@@ -1145,29 +1245,34 @@ int EncryptFlow(const CliOptions& opts) {
         SecureWipeArray(nonce);
         SecureWipeString(name);
     };
+    CliLog(opts, "Starting encryption");
 
     if (opts.text.has_value()) {
         kind_id = kKindText;
         name = "";
         plaintext = ToBytes(*opts.text);
+        CliLog(opts, "Prepared text input (" + std::to_string(plaintext.size()) + " bytes)");
     } else {
-        const std::filesystem::path p(*opts.path);
+        const std::filesystem::path p = PathFromUtf8(*opts.path);
         std::error_code ec;
         if (std::filesystem::is_regular_file(p, ec) && !ec) {
             kind_id = kKindFile;
-            name = p.filename().generic_string();
+            name = Utf8FromPath(p.filename());
+            CliLog(opts, "Reading file input: " + *opts.path);
             if (!ReadFileBytes(*opts.path, plaintext)) {
                 std::cerr << "FileIOError\n";
                 cleanup();
                 return 1;
             }
+            CliLog(opts, "Read file bytes: " + std::to_string(plaintext.size()));
         } else if (std::filesystem::is_directory(p, ec) && !ec) {
             kind_id = kKindDir;
-            name = std::filesystem::absolute(p, ec).filename().generic_string();
+            name = Utf8FromPath(std::filesystem::absolute(p, ec).filename());
             if (ec || name.empty()) {
-                name = p.filename().generic_string();
+                name = Utf8FromPath(p.filename());
             }
 
+            CliLog(opts, "Packing directory into archive bytes (tar-like stream): " + *opts.path);
             std::size_t entry_count = 0;
             const safeanar::AnarStatus status =
                 safeanar::StreamPacker::PackPathToBytes(*opts.path, plaintext, entry_count);
@@ -1176,6 +1281,10 @@ int EncryptFlow(const CliOptions& opts) {
                 cleanup();
                 return 1;
             }
+            CliLog(
+                opts,
+                "Packed entries: " + std::to_string(entry_count) +
+                    ", bytes: " + std::to_string(plaintext.size()));
         } else {
             std::cerr << "InvalidPath\n";
             cleanup();
@@ -1196,6 +1305,22 @@ int EncryptFlow(const CliOptions& opts) {
     }
 
     nonce = RandomNonce();
+    int encrypt_percent = -1;
+    std::function<void(std::size_t, std::size_t)> encrypt_progress;
+    if (opts.log) {
+        encrypt_progress = [&](const std::size_t done, const std::size_t total) {
+            const std::size_t clamped_done = std::min(done, total);
+            const int percent = total == 0 ? 100 : static_cast<int>((clamped_done * 100U) / total);
+            if (percent == encrypt_percent) {
+                return;
+            }
+            encrypt_percent = percent;
+            std::cerr << "\r[log] Encrypting: " << percent << "%" << std::flush;
+            if (percent >= 100) {
+                std::cerr << "\n";
+            }
+        };
+    }
     const safeanar::AnarStatus cipher_status = EncryptPayload(
         opts,
         protocol_id,
@@ -1203,12 +1328,17 @@ int EncryptFlow(const CliOptions& opts) {
         nonce,
         plaintext,
         ciphertext,
-        protocol_key_bytes);
+        protocol_key_bytes,
+        encrypt_progress);
+    if (opts.log && encrypt_percent >= 0 && encrypt_percent < 100) {
+        std::cerr << "\n";
+    }
     if (cipher_status != safeanar::AnarStatus::Ok) {
         std::cerr << safeanar::ToString(cipher_status) << "\n";
         cleanup();
         return 1;
     }
+    CliLog(opts, "Encryption complete");
 
     const auto auth_tag = Sha256(Concat(protocol_key_bytes, plaintext));
     container_bytes = BuildContainer(protocol_id, kind_id, name, nonce, auth_tag, ciphertext);
@@ -1217,22 +1347,25 @@ int EncryptFlow(const CliOptions& opts) {
         cleanup();
         return 1;
     }
+    CliLog(opts, "Writing output: " + *opts.out);
     const safeanar::AnarStatus write_status = WriteContainerOutput(container_bytes, opts);
     if (write_status != safeanar::AnarStatus::Ok) {
         std::cerr << safeanar::ToString(write_status) << "\n";
         cleanup();
         return 1;
     }
+    CliLog(opts, "Done");
     cleanup();
     return 0;
 }
 
 int DecryptFlow(const CliOptions& opts) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(*opts.path, ec) || ec) {
+    if (!std::filesystem::is_regular_file(PathFromUtf8(*opts.path), ec) || ec) {
         std::cerr << "InvalidPath\n";
         return 1;
     }
+    CliLog(opts, "Starting decryption");
 
     std::vector<std::uint8_t> input_bytes;
     std::vector<std::uint8_t> raw_key_bytes;
@@ -1250,6 +1383,7 @@ int DecryptFlow(const CliOptions& opts) {
         SecureWipeArray(container.auth_tag);
     };
 
+    CliLog(opts, "Reading encrypted input: " + *opts.path);
     const safeanar::AnarStatus input_status = LoadCipherInputBytes(opts, input_bytes);
     if (input_status != safeanar::AnarStatus::Ok) {
         std::cerr << safeanar::ToString(input_status) << "\n";
@@ -1276,17 +1410,38 @@ int DecryptFlow(const CliOptions& opts) {
         return 1;
     }
 
+    int decrypt_percent = -1;
+    std::function<void(std::size_t, std::size_t)> decrypt_progress;
+    if (opts.log) {
+        decrypt_progress = [&](const std::size_t done, const std::size_t total) {
+            const std::size_t clamped_done = std::min(done, total);
+            const int percent = total == 0 ? 100 : static_cast<int>((clamped_done * 100U) / total);
+            if (percent == decrypt_percent) {
+                return;
+            }
+            decrypt_percent = percent;
+            std::cerr << "\r[log] Decrypting: " << percent << "%" << std::flush;
+            if (percent >= 100) {
+                std::cerr << "\n";
+            }
+        };
+    }
     const safeanar::AnarStatus cipher_status = DecryptPayload(
         opts,
         container,
         raw_key_bytes,
         plaintext,
-        protocol_key_bytes);
+        protocol_key_bytes,
+        decrypt_progress);
+    if (opts.log && decrypt_percent >= 0 && decrypt_percent < 100) {
+        std::cerr << "\n";
+    }
     if (cipher_status != safeanar::AnarStatus::Ok) {
         std::cerr << safeanar::ToString(cipher_status) << "\n";
         cleanup();
         return 1;
     }
+    CliLog(opts, "Decryption complete");
 
     auto expected_tag = Sha256(Concat(protocol_key_bytes, plaintext));
     const bool auth_ok = ConstantTimeEqual(expected_tag, container.auth_tag);
@@ -1299,16 +1454,19 @@ int DecryptFlow(const CliOptions& opts) {
     }
 
     if (container.kind_id == kKindText || container.kind_id == kKindFile) {
+        CliLog(opts, "Writing output: " + *opts.out);
         if (!WriteFileBytes(*opts.out, plaintext)) {
             std::cerr << "FileIOError\n";
             cleanup();
             return 1;
         }
+        CliLog(opts, "Done");
         cleanup();
         return 0;
     }
 
     if (container.kind_id == kKindDir) {
+        CliLog(opts, "Unpacking directory archive to: " + *opts.out);
         std::size_t extracted_count = 0;
         const safeanar::AnarStatus status = safeanar::StreamPacker::UnpackBytesToPath(plaintext, *opts.out, extracted_count);
         if (status != safeanar::AnarStatus::Ok) {
@@ -1316,6 +1474,7 @@ int DecryptFlow(const CliOptions& opts) {
             cleanup();
             return 1;
         }
+        CliLog(opts, "Done");
         cleanup();
         return 0;
     }
@@ -1364,7 +1523,7 @@ int KeygenFlow(const KeygenOptions& opts) {
 
 }  // namespace
 
-int main(const int argc, char* argv[]) {
+int RunCliMain(const int argc, char* argv[]) {
     if (argc >= 2 && std::string(argv[1]) == "delete") {
         DeleteOptions opts;
         std::string error;
@@ -1409,3 +1568,22 @@ int main(const int argc, char* argv[]) {
     }
     return DecryptFlow(opts);
 }
+
+#ifdef _WIN32
+int main(const int argc, char* argv[]) {
+    std::vector<std::string> utf8_args;
+    if (BuildUtf8ArgsFromCommandLine(utf8_args)) {
+        std::vector<char*> utf8_argv;
+        utf8_argv.reserve(utf8_args.size());
+        for (auto& arg : utf8_args) {
+            utf8_argv.push_back(arg.data());
+        }
+        return RunCliMain(static_cast<int>(utf8_argv.size()), utf8_argv.data());
+    }
+    return RunCliMain(argc, argv);
+}
+#else
+int main(const int argc, char* argv[]) {
+    return RunCliMain(argc, argv);
+}
+#endif

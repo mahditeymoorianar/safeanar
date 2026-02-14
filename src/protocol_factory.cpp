@@ -18,7 +18,8 @@ public:
         const std::vector<std::uint8_t>& input,
         const std::vector<std::uint8_t>& key_bytes,
         const std::array<std::uint8_t, 16>& nonce,
-        std::vector<std::uint8_t>& output) const override {
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress) const override {
         (void)options_;
         if (key_bytes.size() != 32U) {
             return AnarStatus::InvalidKeyLength;
@@ -27,7 +28,7 @@ public:
         for (std::size_t i = 0; i < key.size(); ++i) {
             key[i] = key_bytes[i];
         }
-        return CryptoEngine::Aes256CtrXor(key, nonce, input, output);
+        return CryptoEngine::Aes256CtrXor(key, nonce, input, output, progress);
     }
 
     bool RequiresKeyFile() const override {
@@ -50,10 +51,11 @@ public:
         const std::vector<std::uint8_t>& input,
         const std::vector<std::uint8_t>& key_bytes,
         const std::array<std::uint8_t, 16>& nonce,
-        std::vector<std::uint8_t>& output) const override {
+        std::vector<std::uint8_t>& output,
+        const std::function<void(std::size_t, std::size_t)>& progress) const override {
         (void)options_;
         (void)nonce;
-        return CryptoEngine::OtpXorBytes(input, key_bytes, output);
+        return CryptoEngine::OtpXorBytes(input, key_bytes, output, progress);
     }
 
     bool RequiresKeyFile() const override {
@@ -95,4 +97,3 @@ std::unique_ptr<ICryptoProtocol> ProtocolFactory::Create(
 }
 
 }  // namespace safeanar
-

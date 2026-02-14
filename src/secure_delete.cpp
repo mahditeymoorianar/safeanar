@@ -19,6 +19,16 @@ namespace safeanar {
 
 namespace {
 
+std::filesystem::path PathFromUtf8(const std::string& value) {
+#ifdef _WIN32
+    const auto* begin = reinterpret_cast<const char8_t*>(value.data());
+    const auto* end = begin + value.size();
+    return std::filesystem::path(std::u8string(begin, end));
+#else
+    return std::filesystem::path(value);
+#endif
+}
+
 bool FlushToDisk(std::FILE* file) {
     if (file == nullptr) {
         return false;
@@ -71,7 +81,7 @@ AnarStatus SecureDelete::DeleteFile(const std::string& path, const SecureDeleteO
         return AnarStatus::InvalidLength;
     }
 
-    const std::filesystem::path target(path);
+    const std::filesystem::path target = PathFromUtf8(path);
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(target, ec);
     if (ec || !std::filesystem::exists(status) || !std::filesystem::is_regular_file(status) ||
@@ -87,7 +97,11 @@ AnarStatus SecureDelete::DeleteFile(const std::string& path, const SecureDeleteO
     }
     const std::uint64_t file_size = static_cast<std::uint64_t>(file_size_u);
 
+#ifdef _WIN32
+    std::FILE* file = _wfopen(target.c_str(), L"r+b");
+#else
     std::FILE* file = std::fopen(path.c_str(), "r+b");
+#endif
     if (file == nullptr) {
         return AnarStatus::FileIOError;
     }
