@@ -1,0 +1,18 @@
+[ 92%] Built target cryptopp_vendor
+[ 95%] Built target libsafeanar
+[ 96%] Building CXX object CMakeFiles/safeanar.dir/main.cpp.o
+/app/main.cpp: In function ‘void {anonymous}::SecureWipeBytes(std::vector<unsigned char>&)’:
+/app/main.cpp:377:9: error: ‘CryptoPP’ has not been declared
+  377 |         CryptoPP::memset_z(bytes.data(), 0, bytes.size());
+      |         ^~~~~~~~
+/app/main.cpp: In function ‘void {anonymous}::SecureWipeString(std::string&)’:
+/app/main.cpp:384:9: error: ‘CryptoPP’ has not been declared
+  384 |         CryptoPP::memset_z(value.data(), 0, value.size());
+      |         ^~~~~~~~
+/app/main.cpp: In function ‘void {anonymous}::SecureWipeArray(std::array<unsigned char, N>&)’:
+/app/main.cpp:391:5: error: ‘CryptoPP’ has not been declared
+  391 |     CryptoPP::memset_z(bytes.data(), 0, bytes.size());
+      |     ^~~~~~~~
+gmake[2]: *** [CMakeFiles/safeanar.dir/build.make:76: CMakeFiles/safeanar.dir/main.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:146: CMakeFiles/safeanar.dir/all] Error 2
+gmake: *** [Makefile:91: all] Error 2

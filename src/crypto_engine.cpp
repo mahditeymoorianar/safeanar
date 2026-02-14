@@ -12,6 +12,7 @@
 #include "chachapoly.h"
 #include "modes.h"
 #include "serpent.h"
+#include "misc.h"
 
 namespace safeanar {
 
@@ -168,9 +169,8 @@ std::array<std::uint8_t, kSha256DigestSize> Sha256Digest(const std::uint8_t* dat
 }
 
 void SecureWipeRaw(void* data, const std::size_t bytes) {
-    volatile std::uint8_t* ptr = static_cast<volatile std::uint8_t*>(data);
-    for (std::size_t i = 0; i < bytes; ++i) {
-        ptr[i] = 0U;
+    if (data && bytes > 0) {
+        CryptoPP::memset_z(data, 0, bytes);
     }
 }
 
@@ -1011,6 +1011,12 @@ std::string CryptoEngine::ToHex(const std::vector<std::uint8_t>& data) {
         out.push_back(kHex[b & 0x0FU]);
     }
     return out;
+}
+
+void CryptoEngine::SecureWipe(void* data, std::size_t len) {
+    if (data && len > 0) {
+        CryptoPP::memset_z(data, 0, len);
+    }
 }
 
 }  // namespace safeanar

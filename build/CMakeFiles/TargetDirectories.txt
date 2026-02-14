@@ -1,0 +1,8 @@
+/app/build/CMakeFiles/cryptopp_vendor.dir
+/app/build/CMakeFiles/libsafeanar.dir
+/app/build/CMakeFiles/safeanar.dir
+/app/build/CMakeFiles/anar_key_adapter.dir
+/app/build/CMakeFiles/phase2_crypto_adapter.dir
+/app/build/CMakeFiles/phase3_stream_adapter.dir
+/app/build/CMakeFiles/edit_cache.dir
+/app/build/CMakeFiles/rebuild_cache.dir

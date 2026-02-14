@@ -12,6 +12,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "misc.h"
+
 namespace safeanar {
 
 namespace {
@@ -323,10 +325,7 @@ std::string AnarKey::ToHex(const KeyBytes& key) {
 }
 
 void AnarKey::SecureWipe(KeyBytes& key) {
-    volatile std::uint8_t* ptr = key.data();
-    for (std::size_t i = 0; i < key.size(); ++i) {
-        ptr[i] = 0U;
-    }
+    CryptoPP::memset_z(key.data(), 0, key.size());
 }
 
 std::vector<std::string> AnarKey::SplitAsciiWhitespace(const std::string_view input) {

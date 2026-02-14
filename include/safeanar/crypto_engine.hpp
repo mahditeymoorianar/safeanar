@@ -14,11 +14,14 @@ namespace safeanar {
 
 class CryptoEngine {
 public:
+    // Warning: AES-ECB is insecure. Only for testing component compliance.
+    [[deprecated("Insecure mode. Use only for testing.")]]
     static AnarStatus Aes256EcbEncryptHex(
         std::string_view key_hex,
         std::string_view plaintext_hex,
         std::string& out_ciphertext_hex);
 
+    [[deprecated("Insecure mode. Use only for testing.")]]
     static AnarStatus Aes256EcbDecryptHex(
         std::string_view key_hex,
         std::string_view ciphertext_hex,
@@ -95,6 +98,8 @@ public:
         const std::vector<std::uint8_t>& key_bytes,
         std::vector<std::uint8_t>& output,
         const std::function<void(std::size_t, std::size_t)>& progress = {});
+
+    static void SecureWipe(void* data, std::size_t len);
 
 private:
     static AnarStatus ParseHex(std::string_view hex, std::vector<std::uint8_t>& out_bytes);

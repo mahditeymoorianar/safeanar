@@ -1,0 +1,17 @@
+[ 92%] Built target cryptopp_vendor
+[ 93%] Building CXX object CMakeFiles/libsafeanar.dir/src/crypto_engine.cpp.o
+[ 94%] Building CXX object CMakeFiles/libsafeanar.dir/src/protocol_factory.cpp.o
+[ 94%] Linking CXX static library liblibsafeanar.a
+[ 95%] Built target libsafeanar
+[ 96%] Building CXX object CMakeFiles/safeanar.dir/main.cpp.o
+[ 97%] Linking CXX executable safeanar
+[ 97%] Built target safeanar
+[ 97%] Building CXX object CMakeFiles/anar_key_adapter.dir/src/anar_key_adapter.cpp.o
+[ 98%] Linking CXX executable anar_key_adapter
+[ 98%] Built target anar_key_adapter
+[ 99%] Building CXX object CMakeFiles/phase2_crypto_adapter.dir/src/phase2_crypto_adapter.cpp.o
+[ 99%] Linking CXX executable phase2_crypto_adapter
+[ 99%] Built target phase2_crypto_adapter
+[100%] Building CXX object CMakeFiles/phase3_stream_adapter.dir/src/phase3_stream_adapter.cpp.o
+[100%] Linking CXX executable phase3_stream_adapter
+[100%] Built target phase3_stream_adapter

@@ -5,6 +5,8 @@
 #include <limits>
 #include <random>
 #include <string_view>
+
+#include "osrng.h"
 #include "misc.h"
 
 namespace safeanar {
@@ -280,18 +282,8 @@ AnarStatus FillRandomBytes(std::uint8_t* out, const std::size_t length) {
     }
 
     try {
-        std::random_device rd;
-        if (std::numeric_limits<std::random_device::result_type>::max() == 0) {
-            return AnarStatus::MissingRngBytes;
-        }
-
-        std::size_t written = 0;
-        while (written < length) {
-            const auto value = rd();
-            for (std::size_t i = 0; i < sizeof(value) && written < length; ++i) {
-                out[written++] = static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFU);
-            }
-        }
+        CryptoPP::AutoSeededRandomPool rng;
+        rng.GenerateBlock(out, length);
         return AnarStatus::Ok;
     } catch (...) {
         return AnarStatus::MissingRngBytes;
@@ -376,4 +368,3 @@ const std::string& KeyGenerator::CharacterAlphabet() {
 }
 
 }  // namespace safeanar
-

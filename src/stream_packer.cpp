@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "osrng.h"
+
 namespace safeanar {
 
 namespace {
@@ -696,18 +698,10 @@ AnarStatus StreamPacker::PadFile(
     }
 
     std::uint64_t remaining = target_size - required_min_size;
-    std::mt19937_64 rng(std::random_device{}());
+    CryptoPP::AutoSeededRandomPool rng;
     while (remaining > 0) {
         const std::size_t chunk = remaining > buffer.size() ? buffer.size() : static_cast<std::size_t>(remaining);
-        std::size_t i = 0;
-        while (i + sizeof(std::uint64_t) <= chunk) {
-            const std::uint64_t r = rng();
-            std::memcpy(buffer.data() + i, &r, sizeof(std::uint64_t));
-            i += sizeof(std::uint64_t);
-        }
-        while (i < chunk) {
-            buffer[i++] = static_cast<char>(rng() & 0xFFU);
-        }
+        rng.GenerateBlock(reinterpret_cast<std::uint8_t*>(buffer.data()), chunk);
         out.write(buffer.data(), static_cast<std::streamsize>(chunk));
         if (!out.good()) {
             return AnarStatus::FileIOError;
@@ -850,9 +844,9 @@ AnarStatus StreamPacker::PadBytes(
     pos += input_bytes.size();
 
     const std::size_t footer_pos = out_padded_bytes.size() - kPaddedFooter.size();
-    std::mt19937_64 rng(std::random_device{}());
-    while (pos < footer_pos) {
-        out_padded_bytes[pos++] = static_cast<std::uint8_t>(rng() & 0xFFU);
+    CryptoPP::AutoSeededRandomPool rng;
+    if (pos < footer_pos) {
+        rng.GenerateBlock(out_padded_bytes.data() + pos, footer_pos - pos);
     }
 
     std::memcpy(out_padded_bytes.data() + footer_pos, kPaddedFooter.data(), kPaddedFooter.size());

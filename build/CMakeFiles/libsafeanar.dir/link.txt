@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblibsafeanar.a CMakeFiles/libsafeanar.dir/src/anar_key.cpp.o CMakeFiles/libsafeanar.dir/src/crypto_engine.cpp.o CMakeFiles/libsafeanar.dir/src/key_generator.cpp.o CMakeFiles/libsafeanar.dir/src/protocol_factory.cpp.o CMakeFiles/libsafeanar.dir/src/stream_packer.cpp.o CMakeFiles/libsafeanar.dir/src/secure_delete.cpp.o
+/usr/bin/ranlib liblibsafeanar.a

@@ -8,6 +8,8 @@
 #include <random>
 #include <string>
 #include <vector>
+
+#include "osrng.h"
 #include "misc.h"
 
 #ifdef _WIN32
@@ -60,14 +62,13 @@ void SecureWipeBuffer(std::vector<std::uint8_t>& buffer) {
 
 std::string RandomHexName(const std::size_t bytes) {
     static constexpr char kHex[] = "0123456789abcdef";
-    std::random_device rd;
-    std::mt19937_64 rng(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 255);
+    CryptoPP::AutoSeededRandomPool rng;
 
     std::string name;
     name.reserve(bytes * 2);
     for (std::size_t i = 0; i < bytes; ++i) {
-        const std::uint32_t value = dist(rng);
+        std::uint8_t value = 0;
+        rng.GenerateBlock(&value, 1);
         name.push_back(kHex[(value >> 4U) & 0x0FU]);
         name.push_back(kHex[value & 0x0FU]);
     }
@@ -107,9 +108,7 @@ AnarStatus SecureDelete::DeleteFile(const std::string& path, const SecureDeleteO
     }
 
     std::vector<std::uint8_t> buffer(options.buffer_size, 0U);
-    std::random_device rd;
-    std::mt19937_64 rng(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 255);
+    CryptoPP::AutoSeededRandomPool rng;
 
     auto fail_and_close = [&](const AnarStatus error) -> AnarStatus {
         SecureWipeBuffer(buffer);
@@ -136,9 +135,7 @@ AnarStatus SecureDelete::DeleteFile(const std::string& path, const SecureDeleteO
             } else if (pass == 3) {
                 std::fill(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(chunk), 0xAAU);
             } else {
-                for (std::size_t i = 0; i < chunk; ++i) {
-                    buffer[i] = static_cast<std::uint8_t>(dist(rng));
-                }
+                rng.GenerateBlock(buffer.data(), chunk);
             }
 
             const std::size_t written = std::fwrite(buffer.data(), 1, chunk, file);
