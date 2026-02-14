@@ -8,6 +8,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include "misc.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -52,9 +53,8 @@ bool TruncateToZero(std::FILE* file) {
 }
 
 void SecureWipeBuffer(std::vector<std::uint8_t>& buffer) {
-    volatile std::uint8_t* ptr = buffer.data();
-    for (std::size_t i = 0; i < buffer.size(); ++i) {
-        ptr[i] = 0U;
+    if (!buffer.empty()) {
+        CryptoPP::memset_z(buffer.data(), 0, buffer.size());
     }
 }
 
