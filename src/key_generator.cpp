@@ -5,6 +5,7 @@
 #include <limits>
 #include <random>
 #include <string_view>
+#include "misc.h"
 
 namespace safeanar {
 
@@ -298,9 +299,8 @@ AnarStatus FillRandomBytes(std::uint8_t* out, const std::size_t length) {
 }
 
 void SecureWipeBytes(std::vector<std::uint8_t>& bytes) {
-    volatile std::uint8_t* ptr = bytes.data();
-    for (std::size_t i = 0; i < bytes.size(); ++i) {
-        ptr[i] = 0U;
+    if (!bytes.empty()) {
+        CryptoPP::memset_z(bytes.data(), 0, bytes.size());
     }
     bytes.clear();
 }

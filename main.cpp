@@ -373,27 +373,22 @@ void CliLog(const CliOptions& opts, const std::string& message) {
 }
 
 void SecureWipeBytes(std::vector<std::uint8_t>& bytes) {
-    volatile std::uint8_t* ptr = bytes.data();
-    for (std::size_t i = 0; i < bytes.size(); ++i) {
-        ptr[i] = 0U;
+    if (!bytes.empty()) {
+        CryptoPP::memset_z(bytes.data(), 0, bytes.size());
     }
     bytes.clear();
 }
 
 void SecureWipeString(std::string& value) {
-    volatile char* ptr = value.data();
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        ptr[i] = '\0';
+    if (!value.empty()) {
+        CryptoPP::memset_z(value.data(), 0, value.size());
     }
     value.clear();
 }
 
 template <std::size_t N>
 void SecureWipeArray(std::array<std::uint8_t, N>& bytes) {
-    volatile std::uint8_t* ptr = bytes.data();
-    for (std::size_t i = 0; i < bytes.size(); ++i) {
-        ptr[i] = 0U;
-    }
+    CryptoPP::memset_z(bytes.data(), 0, bytes.size());
 }
 
 bool ConstantTimeEqual(const std::array<std::uint8_t, 32>& lhs, const std::array<std::uint8_t, 32>& rhs) {
